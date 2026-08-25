@@ -25,7 +25,7 @@ For GLiNER2 `span` checkpoints use
 
 ```toml
 [dependencies]
-gliner25-rs = "0.3"
+gliner25-rs = "0.4"
 ```
 
 `gliner25-rs` loads a model from a local directory, and fetches it from the Hub
@@ -131,38 +131,66 @@ mDeBERTa-v3-base, multilingual, 512-position encoder.
 Selected automatically per platform, overridable with
 `GLINER2_PRECISION=fp32|fp16|fp16_iobinding`. A full FP16 set is about 540 MB.
 
+### Execution modes
+
+The engine is a chain of ONNX fragments. Between any two of them the
+intermediate tensor either goes back to host memory and is rebuilt for the next
+fragment, or stays where the provider produced it and is bound straight into the
+next fragment's input.
+
+Same fragments, same order, same arithmetic — only the transport differs. One
+pipeline and a switch:
+
+```rust
+use gliner25_rs::{BoundaryConfig, BoundaryEngine, chain::ExecutionMode};
+
+let cfg = BoundaryConfig::new("models/gliner2.5-onnx")
+    .with_execution(ExecutionMode::IoBinding);
+```
+
+| mode | what it does |
+|---|---|
+| `Auto` *(default)* | bound on a device provider, standard on CPU |
+| `IoBinding` | intermediates stay in device memory across the chain |
+| `Standard` | every output returns to host memory first — works everywhere |
+
+`GLINER2_EXECUTION=standard|binding|auto` sets it from the environment, and
+`GLINER2_NO_IOBINDING=1` forces the standard path.
+`BoundaryEngine::execution()` reports the mode actually in force, after `Auto`
+resolves and after any fallback. A device allocation failure during binding
+drops the engine to the standard path for the rest of its life rather than
+failing the call.
+
+### What it is worth
+
+RTX 3090, `gliner2.5-multi-v1`, fp32, 25 runs, median:
+
+| | `Standard` | `IoBinding` | |
+|---|---|---|---|
+| boundary | 20.4 ms | **11.8 ms** | 1.7× |
+
+The gain is real but smaller than the span engine's 2.4× in
+[gliner2-rs](https://github.com/dariofinardi/gliner2-rs), and the reason is
+structural: every one of the head's five outputs — `cand_indices`,
+`pair_logits`, `cand_valid`, `null_logits`, `count_log_rates` — is decoded on
+the host, so binding cannot keep them anywhere. What it does save is the
+encoder output, which `routed_gather` consumes **three times** per sentence and
+which is the largest tensor in the pipeline.
+
+**No CPU figures here, deliberately.** The measurements were taken on a shared
+development machine at load average 17–19, where the same mode varied by 13×
+between consecutive runs. Anything quoted from that would be invented. What can
+be said is what the design implies: on CPU "device memory" *is* host memory, so
+binding saves no copy and only its bookkeeping remains — which is why `Auto`
+does not use it there.
+
 ### A note on `_fp16_iobinding`
 
-The suffix names what the variant was *exported for*, not what this engine does
-with it. `keep_io_types=False` leaves the graph inputs and outputs in FP16 as
-well as the weights, which is what ORT's zero-copy `IoBinding` needs to keep
-tensors in device memory across the fragment chain.
-
-**This engine does not implement `IoBinding`.** It loads those graphs and runs
-them normally, so the variant still saves the FP32↔FP16 conversions at each
-boundary, but intermediate tensors round-trip through host memory between
-fragments. On CPU that costs nothing; on a discrete GPU it is the PCIe traffic
-the variant exists to avoid.
-
-**`gliner2-rs` has it, this crate does not — yet.** From 0.8.0 the span engine
-runs one pipeline with a switch between the two transports
-(`ExecutionMode::{Standard, IoBinding, Auto}`), and on an RTX 3090 binding is
-2.4–2.5× faster there. Nothing about that result is specific to the span
-architecture, so the same gain should be available here; it is simply not
-written yet.
-
-Two things make it more than a copy. The boundary chain runs a different set of
-fragments, and it picks a different `boundary_head_L*` session per sentence
-according to length, so the bound outputs have to follow a session that changes
-between calls rather than a fixed chain.
-
-Worth knowing meanwhile: `Precision::autodetect` prefers `_fp16_iobinding` on
-Linux and Windows, so by default this crate loads the graphs exported *for*
-binding and then does not bind. That is not wasted — the FP16 I/O still saves a
-conversion at each boundary — but on a discrete GPU the intermediates keep
-crossing PCIe. Set `GLINER2_PRECISION=fp32` if you would rather not pay the
-FP16 casts for a benefit the engine cannot yet collect.
-
+The suffix names what a variant was exported for: `keep_io_types=False` leaves
+graph inputs and outputs in FP16 as well as the weights, which is what zero-copy
+binding wants. The published `gliner2.5-multi-v1` export ships **fp32 only**, so
+the question does not arise for it — `Precision::autodetect` finds no FP16
+variant and settles on fp32. It matters if you export your own.
 
 ---
 

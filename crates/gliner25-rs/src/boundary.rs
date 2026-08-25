@@ -47,6 +47,7 @@ use ort::session::Session;
 use crate::error::GlinerError;
 use crate::overlap::{OverlapPolicy, Spanned, resolve_overlaps};
 use crate::processor::{SchemaTask, SchemaTransformer, TaskType};
+use crate::chain::{Carrier, Chain, ExecutionMode, Feed, Sink};
 use crate::runtime::{
     IoDType, Precision, build_session, float_tensor, i64_tensor, sigmoid, softmax, take_bool,
     take_float, take_i64,
@@ -173,6 +174,8 @@ pub struct BoundaryConfig {
     pub models_dir: PathBuf,
     pub precision: Precision,
     pub intra_threads: usize,
+    /// How intermediate tensors travel between fragments.
+    pub execution: ExecutionMode,
     /// Where to fetch the export from if `models_dir` does not hold one.
     #[cfg(feature = "hub")]
     pub hub: Option<crate::hub::Model>,
@@ -190,6 +193,7 @@ impl BoundaryConfig {
             precision,
             intra_threads: 4,
             lazy_heads: true,
+            execution: ExecutionMode::from_env(),
             #[cfg(feature = "hub")]
             hub: None,
         }
@@ -211,6 +215,15 @@ impl BoundaryConfig {
     #[cfg(feature = "hub")]
     pub fn or_download(mut self, model: crate::hub::Model) -> Self {
         self.hub = Some(model);
+        self
+    }
+
+    /// Chooses the transport between fragments.
+    ///
+    /// Overrides `GLINER2_EXECUTION`. The default is [`ExecutionMode::Auto`]:
+    /// bound on a device provider, standard on CPU.
+    pub fn with_execution(mut self, mode: ExecutionMode) -> Self {
+        self.execution = mode;
         self
     }
 
@@ -238,6 +251,7 @@ pub struct BoundaryEngine {
     heads: Vec<(usize, Option<Session>)>,
 
     transformer: SchemaTransformer,
+    chain: Chain,
     manifest: BoundaryManifest,
     dtype: IoDType,
     dir: PathBuf,
@@ -310,6 +324,7 @@ impl BoundaryEngine {
         }
 
         Ok(Self {
+            chain: Chain::new(config.execution, config.precision.io_dtype())?,
             encoder: load("encoder")?,
             routed_gather: load("routed_gather")?,
             classifier: load("classifier")?,
@@ -350,10 +365,17 @@ impl BoundaryEngine {
 
         // ── 1. encoder ────────────────────────────────────────────────────
         let hidden = {
-            let ids = i64_tensor(vec![1, seq], record.input_ids.clone())?;
-            let mask = i64_tensor(vec![1, seq], record.attention_mask.clone())?;
-            let out = self.encoder.run(ort::inputs![ids, mask])?;
-            take_float(&out["last_hidden_state"], self.dtype)?.1
+            self.chain
+                .run(
+                    &mut self.encoder,
+                    &[
+                        Feed::Owned(i64_tensor(vec![1, seq], record.input_ids.clone())?),
+                        Feed::Owned(i64_tensor(vec![1, seq], record.attention_mask.clone())?),
+                    ],
+                    // consumed three times by routed_gather: text, queries, choices
+                    &[Sink::Device],
+                )?
+                .remove(0)
         };
 
         // ── 2. routing: text padded to the bucket, queries, choices ───────
@@ -378,28 +400,47 @@ impl BoundaryEngine {
         // ── 3. boundary head ──────────────────────────────────────────────
         // `head_for` takes `&mut self`, so fields needed inside the block must
         // be copied out first or they stay locked by the borrow.
-        let dtype = self.dtype;
-        let head = self.head_for(bucket)?;
+        let slot = self.ensure_head(bucket)?;
         let (cand_indices, pair_logits, cand_valid, null_logits, count_log_rates) = {
-            let ts = float_tensor(
-                dtype,
-                vec![1, bucket as i64, hidden_size as i64],
-                text_states,
+            // `chain` and the head are separate fields, so they can be borrowed
+            // together; a method handing back `&mut Session` would borrow all of
+            // `self` and lock the chain out.
+            let chain = &self.chain;
+            let head = self.heads[slot]
+                .1
+                .as_mut()
+                .expect("ensure_head just loaded it");
+            let mut out = chain.run(
+                head,
+                &[
+                    Feed::Carried(&text_states, vec![1, bucket as i64, hidden_size as i64]),
+                    Feed::Owned(i64_tensor(vec![1, bucket as i64], word_mask.clone())?),
+                    Feed::Carried(
+                        &query_states,
+                        vec![1, num_queries as i64, hidden_size as i64],
+                    ),
+                    Feed::Owned(i64_tensor(vec![1, num_queries as i64], query_mask)?),
+                ],
+                // every head output is decoded on the host
+                &[
+                    Sink::HostI64,
+                    Sink::Host,
+                    Sink::HostBool,
+                    Sink::Host,
+                    Sink::Host,
+                ],
             )?;
-            let tm = i64_tensor(vec![1, bucket as i64], word_mask.clone())?;
-            let qs = float_tensor(
-                dtype,
-                vec![1, num_queries as i64, hidden_size as i64],
-                query_states,
-            )?;
-            let qm = i64_tensor(vec![1, num_queries as i64], query_mask)?;
-            let out = head.run(ort::inputs![ts, tm, qs, qm])?;
+            let count_log_rates = out.remove(4).host(self.dtype)?;
+            let null_logits = out.remove(3).host(self.dtype)?;
+            let cand_valid = out.remove(2).host_bool()?;
+            let pair_logits = out.remove(1).host(self.dtype)?;
+            let cand_indices = out.remove(0).host_i64()?;
             (
-                take_i64(&out["cand_indices"])?.1,
-                take_float(&out["pair_logits"], dtype)?.1,
-                take_bool(&out["cand_valid"])?.1,
-                take_float(&out["null_logits"], dtype)?.1,
-                take_float(&out["count_log_rates"], dtype)?.1,
+                cand_indices,
+                pair_logits,
+                cand_valid,
+                null_logits,
+                count_log_rates,
             )
         };
 
@@ -476,7 +517,7 @@ impl BoundaryEngine {
     fn run_classifications(
         &mut self,
         record: &crate::processor::ProcessedRecord,
-        hidden: &[f32],
+        hidden: &Carrier,
         seq: i64,
         hidden_size: usize,
         params: &BoundaryParams,
@@ -490,13 +531,17 @@ impl BoundaryEngine {
         let cls_states = self.gather(hidden, seq, hidden_size, &cls_idx, &mask)?;
 
         let logits = {
-            let cs = float_tensor(
-                self.dtype,
-                vec![cls_idx.len() as i64, hidden_size as i64],
-                cls_states,
-            )?;
-            let out = self.classifier.run(ort::inputs![cs])?;
-            take_float(&out["logits"], self.dtype)?.1
+            self.chain
+                .run(
+                    &mut self.classifier,
+                    &[Feed::Carried(
+                        &cls_states,
+                        vec![cls_idx.len() as i64, hidden_size as i64],
+                    )],
+                    &[Sink::Host],
+                )?
+                .remove(0)
+                .host(self.dtype)?
         };
 
         // logits must be normalised per group, not across every choice at once
@@ -529,24 +574,34 @@ impl BoundaryEngine {
         Ok(())
     }
 
+    /// Gathers the states at `indices` out of the encoder output.
+    ///
+    /// Takes and returns a [`Carrier`] rather than `&[f32]`: when the chain is
+    /// bound, the encoder output never left the device and this is where that
+    /// pays — it is called three times per sentence, on the largest tensor in
+    /// the pipeline.
     fn gather(
         &mut self,
-        hidden: &[f32],
+        hidden: &Carrier,
         seq: i64,
         hidden_size: usize,
         indices: &[i64],
         mask: &[i64],
-    ) -> Result<Vec<f32>> {
+    ) -> Result<Carrier> {
         let n = indices.len() as i64;
-        let h = float_tensor(
-            self.dtype,
-            vec![1, seq, hidden_size as i64],
-            hidden.to_vec(),
-        )?;
-        let idx = i64_tensor(vec![1, n], indices.to_vec())?;
-        let msk = i64_tensor(vec![1, n], mask.to_vec())?;
-        let out = self.routed_gather.run(ort::inputs![h, idx, msk])?;
-        Ok(take_float(&out["states"], self.dtype)?.1)
+        let h = Feed::Carried(hidden, vec![1, seq, hidden_size as i64]);
+        Ok(self
+            .chain
+            .run(
+                &mut self.routed_gather,
+                &[
+                    h,
+                    Feed::Owned(i64_tensor(vec![1, n], indices.to_vec())?),
+                    Feed::Owned(i64_tensor(vec![1, n], mask.to_vec())?),
+                ],
+                &[Sink::Device],
+            )?
+            .remove(0))
     }
 
     /// Smallest bucket that fits `num_words`.
@@ -560,7 +615,12 @@ impl BoundaryEngine {
     }
 
     /// Returns the bucket's head, loading it on demand when `lazy_heads`.
-    fn head_for(&mut self, bucket: usize) -> Result<&mut Session> {
+    /// Loads the head for `bucket` if it is not loaded yet and returns its slot.
+    ///
+    /// Returning an index rather than `&mut Session` is what lets the caller
+    /// borrow the head and `self.chain` at the same time: as separate fields
+    /// that is fine, through a method returning a reference it is not.
+    fn ensure_head(&mut self, bucket: usize) -> Result<usize> {
         let slot = self
             .heads
             .iter()
@@ -572,7 +632,13 @@ impl BoundaryEngine {
                 .join(format!("boundary_head_L{bucket}{}.onnx", self.suffix));
             self.heads[slot].1 = Some(build_session(&path, self.intra_threads)?);
         }
-        Ok(self.heads[slot].1.as_mut().unwrap())
+        Ok(slot)
+    }
+
+    /// The transport actually in force, after `Auto` was resolved and after any
+    /// fallback a device OOM forced.
+    pub fn execution(&self) -> ExecutionMode {
+        self.chain.mode()
     }
 }
 

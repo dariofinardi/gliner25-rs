@@ -26,6 +26,7 @@ fn main() -> anyhow::Result<()> {
 
     let t0 = Instant::now();
     let mut engine = BoundaryEngine::new(BoundaryConfig::new(&dir))?;
+    println!("execution mode: {:?}", engine.execution());
     let load = t0.elapsed();
 
     let tasks = vec![SchemaTask::Entities(vec![

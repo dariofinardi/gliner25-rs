@@ -37,6 +37,7 @@
 //! ranges on the way in.
 
 pub mod boundary;
+pub mod chain;
 pub mod error;
 /// Fetching a published export from the Hub when it is not on disk.
 #[cfg(feature = "hub")]
