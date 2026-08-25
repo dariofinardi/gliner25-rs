@@ -64,8 +64,36 @@ pub const GLINER25_MULTI_V1: Model = Model::new("jugaadsrl/gliner2.5-multi-v1-on
 /// Fragments every boundary export carries, whatever its buckets.
 const FRAGMENTS: [&str; 3] = ["encoder", "routed_gather", "classifier"];
 
-/// Downloads `model` at `precision` and returns the directory to load from.
-pub fn download(model: Model, precision: Precision) -> Result<PathBuf> {
+/// Downloads `model` and returns the directory to load from, with the variant
+/// actually obtained.
+///
+/// Only one variant is fetched — the one asked for, or the first of its
+/// fallbacks the repository publishes. An export carries up to three copies of
+/// every fragment and the encoder alone is half a gigabyte, so fetching all of
+/// them to use one is most of a download wasted.
+pub fn download(model: Model, precision: Precision) -> Result<(PathBuf, Precision)> {
+    let mut last_err = None;
+    for candidate in precision.fallback_chain() {
+        match download_exact(model, *candidate) {
+            Ok(dir) => {
+                if *candidate != precision {
+                    eprintln!(
+                        "[gliner25] {} does not publish the {} variant; using {} instead",
+                        model.repo_id,
+                        precision.suffix().trim_start_matches('_'),
+                        candidate.suffix().trim_start_matches('_'),
+                    );
+                }
+                return Ok((dir, *candidate));
+            }
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("no precision variant could be fetched")))
+}
+
+/// Fetches exactly one variant, failing if the repository does not carry it.
+fn download_exact(model: Model, precision: Precision) -> Result<PathBuf> {
     let api = hf_hub::api::sync::ApiBuilder::new()
         .with_user_agent(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
         .build()

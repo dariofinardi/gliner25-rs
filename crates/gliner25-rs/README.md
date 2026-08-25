@@ -1,104 +1,197 @@
 # gliner25-rs
 
-The GLiNER2.5 **boundary**-architecture inference engine, on ONNX Runtime via
-`ort` 2.0.0-rc.13.
+Native Rust inference for GLiNER2.5 **boundary** checkpoints on ONNX Runtime.
+No Python at inference time, and none at build time either.
 
-Model: [`jugaadsrl/gliner2.5-multi-v1-onnx`](https://huggingface.co/jugaadsrl/gliner2.5-multi-v1-onnx),
-converted from [`fastino/gliner2.5-multi-v1`](https://huggingface.co/fastino/gliner2.5-multi-v1).
+One crate: the boundary engine, with the schema families behind a default-on
+feature.
 
-Schema families ship in the same crate, behind the default-on `families`
-feature: splitting a wide schema into groups of related labels and merging the
-results, the documented remedy for labels interfering with each other. It was a
-separate crate in 0.1, which only ever got installed alongside the engine.
+```toml
+[dependencies]
+gliner25-rs = "0.5"
+```
 
-## Usage
+For GLiNER2 `span` checkpoints use
+[gliner2-rs](https://crates.io/crates/gliner2-rs) instead. The two share a
+lineage but not a graph — the architectures differ in what they enumerate, how
+they score, and even in whether spans are inclusive — and mixing them produces
+nonsense rather than an error.
+
+---
+
+## The five-minute version
 
 ```rust
-use gliner25_rs::{BoundaryConfig, BoundaryEngine, BoundaryParams, SchemaTask};
+use gliner25_rs::{BoundaryConfig, BoundaryEngine, SchemaTask};
 
-gliner25_rs::init("my-app");
-let mut engine = BoundaryEngine::new(BoundaryConfig::new("models/gliner2.5-multi-v1-onnx"))?;
+gliner25_rs::init("my-app");                     // ort::init(), once per process
 
-let tasks = vec![SchemaTask::Entities(vec![
-    "person".into(), "organization".into(), "location".into(),
-])];
+let mut engine = BoundaryEngine::new(BoundaryConfig::new("models/gliner2.5-onnx"))?;
 
-let out = engine.extract_with(
-    text,
-    &tasks,
-    &BoundaryParams { threshold: 0.5, ..Default::default() },
-)?;
+let tasks = vec![SchemaTask::Entities(vec!["person".into(), "location".into()])];
+let out = engine.extract("Mario Rossi lavora a Milano.", &tasks)?;
 
 for m in &out.mentions {
-    println!("{} -> {} ({:.1}%)  words [{}..{})",
-             m.text, m.field, m.score * 100.0, m.word_start, m.word_end);
+    println!("{:?} {} {:.1}%", m.text, m.field, m.score * 100.0);
 }
 ```
 
-`BoundaryConfig::new` reads `boundary_manifest.json` for the pool size, the
-length buckets, the overlap policy and whether the abstention and count heads
-are present, then picks the best precision for the platform. Override with
-`GLINER2_PRECISION=fp32|fp16|fp16_iobinding`.
+`ORT_DYLIB_PATH` must point at an ONNX Runtime **1.23 or newer** shared library.
+Older ones run correctly and then segfault at process exit — see the root README
+for the measurements and the upstream issue.
 
-## Spans are half-open
+---
 
-`[start, end)`, unlike the **inclusive** `[w, w + k]` of the span architecture in
-[gliner2-rs](https://github.com/dariofinardi/gliner2-rs). If you consume both
-engines, convert deliberately at the boundary between them — mixing the
-conventions is a silent off-by-one that survives every type check.
+## What the engine gives you
 
-## How the architecture works
+| type | what it is |
+|---|---|
+| `BoundaryEngine` | the loaded model. `extract` takes `&mut self` |
+| `BoundaryConfig` | where the model is, which variant, how it runs. Builder-style |
+| `BoundaryManifest` | what the export declares: buckets, pool size, abstention, count head |
+| `SchemaTask` | one group: entities, relations, or a classification |
+| `BoundaryOutput` | `mentions`, `classifications`, `expected_counts` |
+| `Mention` | text, task, field, score, byte range, **half-open** word range, query id |
+| `BoundaryParams` | `threshold`, `overlap_policy`, `use_abstention`, temperature, multi-label override |
+| `OverlapPolicy` | `Allow`, `Nested`, `Flat`, `Longest` |
+| `GlinerError` | eight diagnosable failures, `E_GLI_001`…`E_GLI_008` |
 
-It enumerates nothing. A pool of `(start, end)` candidates is proposed **once,
-shared across all queries**, at constant size `pool_size` (192), and each
-query/candidate pair gets a logit:
-
-```text
-encoder(input_ids, attention_mask) -> last_hidden_state [1,S,H]
-  +- routed_gather(lhs, idx, mask) -> text / query / choice states
-  +- boundary_head_L{bucket}(text_states, text_mask, query_states, query_mask)
-  |     -> cand_indices    [1,Q,C,2]   half-open (start, end)
-  |     -> pair_logits     [1,Q,C]
-  |     -> cand_valid      [1,Q,C]
-  |     -> null_logits     [1,Q]       per-query abstention
-  |     -> count_log_rates [1,Q]       expected mentions per query
-  +- classifier(choice_states) -> logits [K]
+```rust
+let m = engine.manifest();
+println!("{:?} buckets, pool {}", m.length_buckets, m.pool_size);
 ```
 
-`BoundaryParams::use_abstention` honours `null_logits`: a query whose null logit
-beats its best candidate produces nothing at all. `BoundaryOutput::expected_counts`
-exposes the count head.
+`engine.manifest()` is worth reading before anything else: it tells you the
+largest text the model can see in one call, whether abstention is available,
+and which overlap policy the export was trained for.
 
-## Length buckets
+---
 
-The heads have a **static** `num_words`: `torch.export` specialises it, because
-the candidate-pool builder loops in Python over a symbolic dimension. One head
-is exported per bucket — 64, 128, 256, 512 — and the engine picks the smallest
-that fits, padding with `text_mask = 0`.
+## Schema families
 
-This costs nothing: a head is a few MB against 530 MB of encoder, and static
-shapes are what TensorRT and QNN want, and what zero-copy binding would need.
-Masked padding is verified
-transparent to 5e-07, even with random noise in the padded rows. Texts beyond
-the largest bucket raise `E_GLI_007` rather than silently truncating; the
-encoder caps at 512 positions anyway.
+A wide schema makes labels compete for the same candidate pool, and spans
+fragment. Families are one pass per group, so they do not:
 
-## Pool order carries no meaning
+```rust
+use gliner25_rs::families::{Family, chunk_into_families, run_families};
 
-It comes from an `argsort` over frequently near-tied scores, and sort stability
-is exactly what the ONNX export removes — ONNX has no stable Sort and
-`aten.sort.stable` has no translation. Under FP16, rounding permutes the ties
-while still selecting the same candidates. If you compare two runs, compare
-`cand_indices` as a **set** of `(start, end)` pairs, never positionally. The
-decoder here is order-independent.
+let families = vec![
+    Family::new("people",  ["person", "organization"]),
+    Family::new("places",  ["location", "address"]),
+    Family::new("contact", ["email", "phone number"]),
+];
+let out = run_families(&mut engine, text, &families, &BoundaryParams::default())?;
+```
 
-## Multi-label classification falls back to the argmax
+`chunk_into_families(&labels, 8)` splits a flat label list mechanically when you
+have no natural grouping. Merging is by `(word_start, word_end, field)`, so
+mentions from different families coexist over the same text — two families
+disagreeing about a stretch is information, not a conflict.
 
-gliner2's multi-label decoding never returns an empty list: when no label clears
-the threshold, the top-scoring one comes back anyway. Use
-`BoundaryOutput::verdict`, which implements the rule. Thresholding the raw
-scores yourself silently disagrees with the reference.
+The cost is one encoder pass per family. Measure before deciding it is too much:
+on a wide schema it is often cheaper than the fragmentation it prevents.
 
+---
 
+## Long documents
 
-Apache-2.0. Copyright 2026 Dario Finardi. Published by Jugaad s.r.l.
+The export declares length buckets, and the largest is a hard ceiling — 512
+words for `gliner2.5-multi-v1`. `extract` does not truncate past it, it returns
+`E_GLI_007 NO_LENGTH_BUCKET`, which is right for one call and useless for a
+document.
+
+```rust
+let out = engine.extract_long(&document, &tasks)?;    // 384-word windows, 64 overlap
+```
+
+Measured on a 1 200-word document: `extract` fails, `extract_long` returns 51
+mentions in 716 ms with every offset indexing the original text.
+
+`extract_long_with(text, tasks, params, Chunker::new(256, 48)?)` sets the
+geometry. What no merge can recover is a mention longer than the overlap, or a
+relation whose ends fall in different windows — see the [`chunker`] module docs.
+
+---
+
+## Execution modes
+
+Between any two fragments an intermediate tensor either returns to host memory
+or stays where the provider produced it. Same maths, different transport.
+
+```rust
+use gliner25_rs::chain::ExecutionMode;
+let cfg = BoundaryConfig::new("models/g25").with_execution(ExecutionMode::IoBinding);
+```
+
+| mode | |
+|---|---|
+| `Auto` *(default)* | bound on a device provider, standard on CPU |
+| `IoBinding` | intermediates stay in device memory — **1.7× on an RTX 3090** |
+| `Standard` | every output returns to the host first; works everywhere |
+
+Smaller than the span engine's 2.4×, and structurally so: all five head outputs
+are decoded on the host, so binding cannot keep them anywhere. What it saves is
+the encoder output, which `routed_gather` consumes three times per sentence.
+
+A device allocation failure drops the engine to the standard path for the rest
+of its life rather than failing the call. `engine.execution()` reports what is
+actually in force.
+
+---
+
+## Getting the weights
+
+```rust
+use gliner25_rs::hub;
+let cfg = BoundaryConfig::new("models/g25").or_download(hub::GLINER25_MULTI_V1);
+```
+
+**Only the variant you will run is downloaded** — the execution mode picks it,
+so a bound engine fetches the FP16-I/O graphs and a standard one the FP32,
+rather than pulling every copy of every fragment. If the repository does not
+publish the preferred variant the engine falls back rather than failing;
+`jugaadsrl/gliner2.5-multi-v1-onnx` currently ships FP32 only.
+
+The manifest is fetched and parsed *before* the heads, because which
+`boundary_head_L*` exist is a property of the export — guessing would either
+miss a bucket or request files that were never written. Sidecar `.onnx.data`
+files travel with their graph.
+
+Both layouts load: flat, and grouped into `fp32_25/` + `fp16_25/` (or GLiNER2's
+`fp32_v2/` + `fp16_v2/`). Point the engine at the parent and it picks the
+subfolder; point it at one folder and it loads that.
+
+---
+
+## Four things that will surprise you
+
+**Spans are half-open.** `Mention::word_start` and `word_end` are `[start, end)`
+— a one-word mention has `word_end == word_start + 1`. The `span` architecture
+in `gliner2-rs` uses inclusive ranges. Byte offsets are half-open in both.
+
+**Length buckets are not a detail.** `torch.export` specialises `num_words`, so
+each bucket is its own exported head. The engine pads the text to the smallest
+bucket that fits and loads that head lazily. Padding is transparent to 5e-07,
+verified against the unpadded run.
+
+**Pool order carries no meaning.** The candidate pool is produced by a sort that
+had `stable=True` stripped at export — ONNX has no stable `Sort`. Compare
+candidate *sets*, never positions: a parity check that lines up `cand_indices`
+by index will report differences that are not there.
+
+**Multi-label classification falls back to the argmax.** When no label clears
+the threshold, `verdict` returns the single highest rather than nothing, which
+is what `gliner2` does. Read `out.classifications` directly if you want the raw
+probabilities.
+
+---
+
+## Weights are not ours
+
+GLiNER2.5 is developed by [Fastino](https://fastino.ai); the GLiNER line it
+descends from is the work of Urchade Zaratiana et al. Converting a model to ONNX
+changes neither its licence nor its ownership. See [`NOTICE`](../../NOTICE).
+
+Engine code: Apache-2.0. Written by **Dario Finardi**, published by **Jugaad
+s.r.l.**, used in production in **Edito** and **Omissis** —
+[edito-pdf.com](https://edito-pdf.com).

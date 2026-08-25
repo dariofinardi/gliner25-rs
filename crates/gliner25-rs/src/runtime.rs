@@ -56,6 +56,19 @@ impl Precision {
 
     /// Subfolder a legacy export keeps this variant in.
     ///
+    /// Variants to try, in order, when the preferred one is not published.
+    ///
+    /// Not every export ships all three: `jugaadsrl/gliner2.5-multi-v1-onnx`
+    /// carries FP32 only. Asking the Hub for a variant that does not exist
+    /// should degrade to one that does, not fail the load.
+    pub fn fallback_chain(self) -> &'static [Precision] {
+        match self {
+            Self::Fp16IoBinding => &[Self::Fp16IoBinding, Self::Fp16, Self::Fp32],
+            Self::Fp16 => &[Self::Fp16, Self::Fp32],
+            Self::Fp32 => &[Self::Fp32],
+        }
+    }
+
     /// Subfolders this variant may live in, in search order.
     ///
     /// An export can be flat or grouped by precision, and the group names

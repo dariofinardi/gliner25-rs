@@ -47,6 +47,7 @@ use ort::session::Session;
 use crate::error::GlinerError;
 use crate::overlap::{OverlapPolicy, Spanned, resolve_overlaps};
 use crate::processor::{SchemaTask, SchemaTransformer, TaskType};
+use crate::chunker::Chunker;
 use crate::chain::{Carrier, Chain, ExecutionMode, Feed, Sink};
 use crate::runtime::{
     IoDType, Precision, build_session, float_tensor, i64_tensor, resolve_aux, resolve_fragment,
@@ -176,6 +177,9 @@ pub struct BoundaryConfig {
     pub intra_threads: usize,
     /// How intermediate tensors travel between fragments.
     pub execution: ExecutionMode,
+    /// Set when the caller named a precision, so the engine does not override
+    /// it with the one the execution mode would prefer.
+    precision_pinned: bool,
     /// Where to fetch the export from if `models_dir` does not hold one.
     #[cfg(feature = "hub")]
     pub hub: Option<crate::hub::Model>,
@@ -194,6 +198,8 @@ impl BoundaryConfig {
             intra_threads: 4,
             lazy_heads: true,
             execution: ExecutionMode::from_env(),
+            // GLINER2_PRECISION is as explicit as calling with_precision.
+            precision_pinned: std::env::var("GLINER2_PRECISION").is_ok(),
             #[cfg(feature = "hub")]
             hub: None,
         }
@@ -227,8 +233,13 @@ impl BoundaryConfig {
         self
     }
 
+    /// Pins the export variant.
+    ///
+    /// Also stops the engine choosing one from the execution mode when it has
+    /// to download: an explicit choice is an instruction, not a hint.
     pub fn with_precision(mut self, precision: Precision) -> Self {
         self.precision = precision;
+        self.precision_pinned = true;
         self
     }
 
@@ -273,7 +284,15 @@ impl BoundaryEngine {
             if resolve_aux(&config.models_dir, "boundary_manifest.json", config.precision)
                 .is_none()
             {
-                config.models_dir = crate::hub::download(model, config.precision)?;
+                // Nothing on disk, so `autodetect` had no files to inspect and
+                // fell back to FP32. Let the transport pick instead: a bound
+                // chain wants the FP16 I/O graphs, the standard path does not.
+                if !config.precision_pinned {
+                    config.precision = config.execution.preferred_precision();
+                }
+                let (dir, got) = crate::hub::download(model, config.precision)?;
+                config.models_dir = dir;
+                config.precision = got;
             }
         }
 
@@ -358,11 +377,79 @@ impl BoundaryEngine {
         &self.manifest
     }
 
+    /// Extracts over a document longer than the model's largest length bucket.
+    ///
+    /// [`extract`](Self::extract) refuses text above the ceiling rather than
+    /// truncating it, which is right for one call and useless for a document.
+    /// This splits the text into overlapping word windows, runs each, shifts
+    /// the offsets back onto the original, and merges the duplicates the
+    /// overlap produces.
+    ///
+    /// Text that fits in one window takes the single-call path, so this is safe
+    /// to use unconditionally — there is no penalty for short input.
+    ///
+    /// See [`chunker`](crate::chunker) for what merging can and cannot recover.
+    pub fn extract_long(&mut self, text: &str, tasks: &[SchemaTask]) -> Result<BoundaryOutput> {
+        self.extract_long_with(text, tasks, &BoundaryParams::default(), Chunker::default())
+    }
+
+    /// [`extract_long`](Self::extract_long) with the window geometry spelled out.
+    pub fn extract_long_with(
+        &mut self,
+        text: &str,
+        tasks: &[SchemaTask],
+        params: &BoundaryParams,
+        chunker: Chunker,
+    ) -> Result<BoundaryOutput> {
+        let chunks = chunker.split(text)?;
+        if chunks.len() <= 1 {
+            return self.extract_with(text, tasks, params);
+        }
+        let mut parts = Vec::with_capacity(chunks.len());
+        for chunk in &chunks {
+            let mut part = self.extract_with(chunk.slice(text), tasks, params)?;
+            crate::chunker::remap(&mut part, chunk, text);
+            parts.push(part);
+        }
+        Ok(crate::chunker::merge(parts))
+    }
+
     pub fn extract(&mut self, text: &str, tasks: &[SchemaTask]) -> Result<BoundaryOutput> {
         self.extract_with(text, tasks, &BoundaryParams::default())
     }
 
+    /// Runs the chain, and on a device allocation failure runs it again on the
+    /// standard path.
+    ///
+    /// Binding holds every intermediate on the device at once, so it is the
+    /// first thing to give way on a long input. Failing the call there would be
+    /// the wrong answer: the standard path releases each tensor as soon as the
+    /// next fragment has consumed it and will very often succeed on exactly the
+    /// input that broke binding. The engine stays on the standard path
+    /// afterwards rather than paying the same failure on every call.
     pub fn extract_with(
+        &mut self,
+        text: &str,
+        tasks: &[SchemaTask],
+        params: &BoundaryParams,
+    ) -> Result<BoundaryOutput> {
+        match self.extract_once(text, tasks, params) {
+            Err(e)
+                if self.chain.mode() == ExecutionMode::IoBinding
+                    && matches!(
+                        e.downcast_ref::<GlinerError>(),
+                        Some(GlinerError::OomDeviceBinding(_) | GlinerError::BindingNotSupported(_))
+                    ) =>
+            {
+                eprintln!("[gliner25] {e}; continuing on the standard path");
+                self.chain.fall_back();
+                self.extract_once(text, tasks, params)
+            }
+            other => other,
+        }
+    }
+
+    fn extract_once(
         &mut self,
         text: &str,
         tasks: &[SchemaTask],

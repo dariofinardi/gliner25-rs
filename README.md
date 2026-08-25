@@ -25,7 +25,7 @@ For GLiNER2 `span` checkpoints use
 
 ```toml
 [dependencies]
-gliner25-rs = "0.4"
+gliner25-rs = "0.5"
 ```
 
 `gliner25-rs` loads a model from a local directory, and fetches it from the Hub
@@ -69,6 +69,14 @@ re-fetched, and the network is reached only on a miss. Files land in the shared
 Hub cache (`HF_HOME`, else `~/.cache/huggingface`), so a model already pulled by
 the Python library is not pulled again.
 
+**Only the variant you will run is fetched.** An export carries up to three
+copies of every fragment and the encoder alone is half a gigabyte, so the
+execution mode picks: a bound engine takes the FP16-I/O graphs, a standard one
+the FP32. `with_precision` pins the variant instead. If the repository does not
+publish the preferred one the engine falls back rather than failing —
+`jugaadsrl/gliner2.5-multi-v1-onnx` currently ships FP32 only, so both modes
+land there today.
+
 `hub::GLINER25_MULTI_V1` is
 [`jugaadsrl/gliner2.5-multi-v1-onnx`](https://huggingface.co/jugaadsrl/gliner2.5-multi-v1-onnx).
 Any other repository works — `hub::Model::new(repo_id)` takes a private
@@ -106,6 +114,41 @@ and with it `openssl` — a C library and the CVE stream that comes with it — 
 no benefit here.
 
 ---
+
+---
+
+## Long documents
+
+The export declares its length buckets, and the largest is a hard ceiling — 512
+words for `gliner2.5-multi-v1`. `extract` does not truncate past it: it returns
+`E_GLI_007 NO_LENGTH_BUCKET`. That is right for one call and useless for a
+document.
+
+```rust
+let out = engine.extract_long(&document, &tasks)?;   // 384-word windows, 64 overlap
+```
+
+Measured on a 1 208-word document, `cuda:1`: `extract` fails with
+`1326 words exceed the largest exported bucket (512)`, `extract_long` returns
+**51 mentions in 716 ms**, every offset indexing the original text.
+
+Text that fits in one window takes the single-call path, so this is safe to use
+unconditionally. `extract_long_with(.., Chunker::new(256, 48)?)` sets the
+geometry.
+
+**Why the windows overlap.** A mention straddling a window edge is seen whole by
+neither. The overlap is its second chance: with 64 words of margin, anything
+shorter appears intact in at least one window. What no merge can recover is a
+mention longer than the overlap, or a relation whose ends fall in different
+windows — inherent to chunking, not to this implementation.
+
+Duplicates are collapsed by span keeping the highest score; classifications per
+label, also by highest score. Read a document-level classification as "somewhere
+in here", not "overall".
+
+This mirrors what `gliner2.inference.chunking` does on the Python side, with the
+same 384/64 defaults — 384 leaves room under the 512-word bucket for the schema
+markers, which are counted against the same budget.
 
 ## Model
 
