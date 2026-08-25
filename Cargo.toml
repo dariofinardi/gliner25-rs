@@ -1,10 +1,10 @@
 [workspace]
 resolver = "3"
 members = [
-    # the engine: prompt construction, ort helpers, overlap policies, boundary
-    # inference. Self-contained, so it publishes under one name.
-    "crates/gliner25-core",
-    "crates/gliner25",
+    # One crate. The engine and the schema families ship together because
+    # anyone using this model wants both; splitting them produced a package
+    # that was only ever installed as a set.
+    "crates/gliner25-rs",
 ]
 
 [workspace.package]

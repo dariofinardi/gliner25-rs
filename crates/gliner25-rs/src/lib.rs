@@ -12,7 +12,7 @@
 //! [gliner2-rs](https://github.com/dariofinardi/gliner2-rs). Mixing the two
 //! conventions is a silent off-by-one.
 //!
-//! Schema families and merging live in the [`gliner25`] extension crate.
+//! Schema families live in [`families`], behind a default-on feature.
 
 //! ## Layout
 //!
@@ -41,6 +41,12 @@ pub mod error;
 pub mod overlap;
 pub mod processor;
 pub mod runtime;
+
+/// Schema families: splitting a wide schema into groups of related labels and
+/// merging the results, the documented remedy for labels interfering with each
+/// other when many are passed at once.
+#[cfg(feature = "families")]
+pub mod families;
 
 pub use boundary::{
     BoundaryConfig, BoundaryEngine, BoundaryManifest, BoundaryOutput, BoundaryParams,

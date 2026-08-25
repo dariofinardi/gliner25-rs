@@ -6,7 +6,7 @@
 //! ORT_DYLIB_PATH=… cargo run --release --example dump_json -p gliner25-core -- <models_dir> <cases.json>
 //! ```
 
-use gliner25_core::{BoundaryConfig, BoundaryEngine, BoundaryParams, SchemaTask};
+use gliner25_rs::{BoundaryConfig, BoundaryEngine, BoundaryParams, SchemaTask};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -21,7 +21,7 @@ fn main() -> anyhow::Result<()> {
     let dir = args.next().expect("usage: dump_json <models_dir> <cases.json>");
     let cases_path = args.next().expect("usage: dump_json <models_dir> <cases.json>");
 
-    gliner25_core::init("dump_json");
+    gliner25_rs::init("dump_json");
     let mut engine = BoundaryEngine::new(BoundaryConfig::new(&dir))?;
 
     let cases: Vec<Case> = serde_json::from_slice(&std::fs::read(&cases_path)?)?;
