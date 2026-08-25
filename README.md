@@ -21,16 +21,19 @@ For GLiNER2 `span` checkpoints use
 
 | crate | what it is | docs |
 |---|---|---|
-| [`gliner-core`](crates/gliner-core) | prompt construction, ONNX Runtime helpers, overlap policies | [README](crates/gliner-core/README.md) |
-| [`gliner25-core`](crates/gliner25-core) | the boundary inference engine | [README](crates/gliner25-core/README.md) |
+| [`gliner25-core`](crates/gliner25-core) | the engine: prompt construction, ONNX Runtime helpers, overlap policies, boundary inference | [README](crates/gliner25-core/README.md) |
 | [`gliner25`](crates/gliner25) | schema families and merging | [README](crates/gliner25/README.md) |
 
-One model, three crates — deliberately. The layering is not for this repository's
-sake: `gliner-core` is shared with `gliner2-rs`, and keeping the seam visible is
-what will let this workspace depend on it from crates.io once it is published,
-rather than carrying a copy. **Today it is a copy**, and that is the one piece of
-duplication the split does not remove. A second copy is exactly how the two
-drifted apart before.
+One model, two crates. `gliner25-core` is self-contained: prompt construction,
+`ort` helpers and overlap policies live in it rather than in a crate shared with
+[gliner2-rs](https://github.com/dariofinardi/gliner2-rs).
+
+That is a deliberate trade. A shared crate would have to be published under a
+single name and would tie the two repositories' release cadences together, for
+four modules that change rarely. The cost is real and worth stating: **a fix to
+those modules has to land in both repositories.** It has happened twice already —
+the cross-label suppression rule and the multi-label argmax fallback — so treat
+them as a pair when changing anything below the engine.
 
 ---
 
@@ -113,10 +116,28 @@ remedy.
 ## Requirements
 
 - Rust **edition 2024**, MSRV **1.88**
-- ONNX Runtime shared library, resolved at run time from `ORT_DYLIB_PATH`. The
-  workspace pins `ort = 2.0.0-rc.13` with `default-features = false`, so nothing
-  is downloaded at build time and no EP libraries are copied next to your
-  binary. Verified against ONNX Runtime 1.25.1 at API level 17.
+- `ort` **≥ 2.0.0-rc.13, < 3.0**, with `default-features = false` — nothing is
+  downloaded at build time and no execution-provider libraries are copied next
+  to your binary.
+- ONNX Runtime shared library, resolved at run time from `ORT_DYLIB_PATH`.
+  Verified against ONNX Runtime 1.25.1 at API level 17, and against the
+  `onnxruntime-gpu` 1.23.2 build for CUDA.
+
+  **The rc.13 floor is not arbitrary.** Release candidates 10 through 12 were
+  tried and rejected: on **ARM CPU** some models hung during session
+  initialisation or inference, reproducibly enough that this project stayed on
+  rc.9 for months rather than move to them. rc.13 is the first candidate since
+  rc.9 that runs those models on ARM, which is why the migration skipped three
+  releases. Do not lower the floor.
+
+  Upwards, the requirement is a caret rather than an exact pin, so these crates
+  can be combined with anything else depending on `ort`. That is a calculated
+  risk while `ort` is still in release candidates: between rc.9 and rc.13,
+  `commit()` changed its return type, `Session::run` started taking `&mut self`,
+  `try_extract_tensor` began returning a `Shape`, and `Outlet`'s fields went
+  private. A later rc can break the build the same way. **Pin exactly in your
+  own application** if you need that guarantee — a library should not impose it
+  on its dependents.
 
 ---
 

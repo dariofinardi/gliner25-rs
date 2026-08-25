@@ -96,4 +96,6 @@ the threshold, the top-scoring one comes back anyway. Use
 `BoundaryOutput::verdict`, which implements the rule. Thresholding the raw
 scores yourself silently disagrees with the reference.
 
+
+
 Apache-2.0. Copyright 2026 Dario Finardi. Published by Jugaad s.r.l.
