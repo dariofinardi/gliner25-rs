@@ -201,8 +201,12 @@ gliner2 2.0.0.
 
 ---
 
-## License
+## License and attribution
 
 Licensed under the [Apache License, Version 2.0](LICENSE).
+
+The models are the work of the [Fastino](https://fastino.ai) team and are not
+distributed from this repository; converting a model changes neither its licence
+nor its ownership. See [`NOTICE`](NOTICE) for the full attribution.
 
 Copyright 2026 Dario Finardi. Published by Jugaad s.r.l.
