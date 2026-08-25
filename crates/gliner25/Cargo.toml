@@ -1,0 +1,17 @@
+[package]
+name = "gliner25"
+version = "0.1.0"
+description = "Schema families and merging for GLiNER2.5 boundary models"
+readme = "README.md"
+keywords = ["nlp", "ner", "onnx", "gliner"]
+categories = ["science", "text-processing"]
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+gliner25-core = { version = "0.1.0", path = "../gliner25-core" }
+anyhow.workspace = true

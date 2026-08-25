@@ -289,7 +289,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "gliner25"
+name = "gliner-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -297,9 +297,28 @@ dependencies = [
  "ndarray",
  "ort",
  "regex",
+ "tokenizers",
+]
+
+[[package]]
+name = "gliner25"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gliner25-core",
+]
+
+[[package]]
+name = "gliner25-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gliner-core",
+ "half",
+ "ndarray",
+ "ort",
  "serde",
  "serde_json",
- "tokenizers",
 ]
 
 [[package]]

@@ -23,7 +23,7 @@ use half::f16;
 use ort::session::Session;
 use ort::session::builder::SessionBuilder;
 use ort::value::{DynValue, Tensor};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Precision variant of the fragments on disk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +53,19 @@ impl Precision {
         }
     }
 
+    /// Subfolder a legacy export keeps this variant in.
+    ///
+    /// Exports published before the flat layout group the fragments into
+    /// `fp32_v2/` and `fp16_v2/`, the latter holding both the `_fp16` and the
+    /// `_fp16_iobinding` files. `jugaadsrl/gliner2-privacy-filter-PII-multi-onnx`
+    /// is laid out that way.
+    pub fn legacy_subdir(self) -> &'static str {
+        match self {
+            Self::Fp32 => "fp32_v2",
+            Self::Fp16 | Self::Fp16IoBinding => "fp16_v2",
+        }
+    }
+
     /// Picks the best variant available for the current platform.
     ///
     /// On Linux and Windows the `_fp16_iobinding` variants maximise CUDA/ROCm;
@@ -67,7 +80,7 @@ impl Precision {
                 other => eprintln!("GLINER2_PRECISION={other} not recognised, ignoring"),
             }
         }
-        let exists = |p: Precision| dir.join(format!("{stem_probe}{}.onnx", p.suffix())).exists();
+        let exists = |p: Precision| resolve_fragment(dir, stem_probe, p).is_some();
         let prefer_iobinding = !cfg!(target_os = "macos") && !cfg!(target_os = "ios");
         if prefer_iobinding && exists(Self::Fp16IoBinding) {
             Self::Fp16IoBinding
@@ -83,6 +96,48 @@ impl Precision {
 pub enum IoDType {
     F32,
     F16,
+}
+
+/// Resolves one fragment, accepting both directory layouts.
+///
+/// Flat, as produced by `export_span_v3.py`:
+///
+/// ```text
+/// models/encoder_fp16_iobinding.onnx
+/// ```
+///
+/// Legacy, as published on the Hub by the earlier exporter:
+///
+/// ```text
+/// models/fp16_v2/encoder_fp16_iobinding.onnx
+/// ```
+pub fn resolve_fragment(dir: &Path, stem: &str, precision: Precision) -> Option<PathBuf> {
+    let file = format!("{stem}{}.onnx", precision.suffix());
+    let flat = dir.join(&file);
+    if flat.exists() {
+        return Some(flat);
+    }
+    let nested = dir.join(precision.legacy_subdir()).join(&file);
+    if nested.exists() {
+        return Some(nested);
+    }
+    None
+}
+
+/// Locates the tokenizer, which the legacy layout keeps inside each variant
+/// subfolder rather than at the root.
+pub fn resolve_tokenizer(dir: &Path, precision: Precision) -> Option<PathBuf> {
+    for candidate in [
+        dir.join("tokenizer.json"),
+        dir.join(precision.legacy_subdir()).join("tokenizer.json"),
+        dir.join("fp32_v2").join("tokenizer.json"),
+        dir.join("fp16_v2").join("tokenizer.json"),
+    ] {
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 /// Builds a session with the common options applied.

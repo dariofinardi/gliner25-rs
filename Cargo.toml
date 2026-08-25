@@ -1,21 +1,30 @@
-[package]
-name = "gliner25"
-version = "0.1.0"
+[workspace]
+resolver = "3"
+members = [
+    # Foundation, shared with gliner2-rs. It is kept here as a copy only until
+    # gliner-core is published: at that point this workspace should depend on
+    # it from crates.io instead, because a second copy is exactly how the two
+    # drifted apart before.
+    "crates/gliner-core",
+    # boundary architecture (GLiNER2.5) and its extension
+    "crates/gliner25-core",
+    "crates/gliner25",
+]
+
+[workspace.package]
 edition = "2024"
 rust-version = "1.88"
 authors = ["Dario Finardi <df@dariofinardi.it>"]
-description = "Native Rust inference engine for GLiNER2.5 boundary-architecture models on ONNX Runtime"
 license = "Apache-2.0"
 repository = "https://github.com/dariofinardi/gliner25-rs"
 homepage = "https://edito-pdf.com"
-keywords = ["nlp", "ner", "onnx", "inference", "gliner"]
-categories = ["science", "text-processing"]
 
-[dependencies]
-ort = { version = "2.0.0-rc.13", default-features = false, features = [
-    "std", "ndarray", "tracing", "half",
-    "load-dynamic",
-    "cuda", "rocm", "coreml", "openvino", "directml", "tensorrt", "xnnpack", "qnn",
+[workspace.dependencies]
+# One ort version for the whole workspace: mixing release candidates across
+# crates would link two incompatible ONNX Runtime bindings into one binary.
+ort = { version = "=2.0.0-rc.13", default-features = false, features = [
+    "std", "ndarray", "load-dynamic",
+    "cuda", "rocm", "coreml", "openvino", "directml", "tensorrt", "xnnpack", "qnn", "half",
 ] }
 ndarray = "0.17"
 tokenizers = "0.23"

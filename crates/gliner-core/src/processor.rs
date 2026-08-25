@@ -385,11 +385,22 @@ mod tests {
     /// Locates a gliner2 `tokenizer.json`. Model directories are gitignored, so
     /// the test skips instead of failing when none is available.
     fn tokenizer_path() -> Option<std::path::PathBuf> {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        ["models/gliner2.5-multi-v1-onnx/tokenizer.json", "models/tokenizer.json"]
-            .iter()
-            .map(|p| root.join(p))
-            .find(|p| p.exists())
+        // Walk up to the workspace root: model directories are gitignored and
+        // shared by every crate, so they live there rather than per crate.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()?
+            .parent()?
+            .to_path_buf();
+        [
+            "models/tokenizer.json",
+            "models/pii-onnx/tokenizer.json",
+            "models/pii-legacy/fp16_v2/tokenizer.json",
+            "models/guardrails-pii-multi-onnx/tokenizer.json",
+            "models/gliner2.5-multi-v1-onnx/tokenizer.json",
+        ]
+        .iter()
+        .map(|p| root.join(p))
+        .find(|p| p.exists())
     }
 
     /// Ground truth produced by gliner2 2.0.0:
