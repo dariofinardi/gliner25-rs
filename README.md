@@ -28,6 +28,11 @@ For GLiNER2 `span` checkpoints use
 gliner25-rs = "0.2"
 ```
 
+`gliner25-rs` never touches the network: it loads a model from a local directory
+and has no HTTP client, no TLS stack and no Hub client in its dependency tree.
+Fetch the ONNX export however you like — `hf download`, `git clone`, a build
+step — and hand it the path.
+
 One model, one crate. Prompt construction, `ort` helpers, overlap policies and
 schema families all live in it rather than in separate packages — 0.1 split them
 and produced pieces that were only ever installed as a set.

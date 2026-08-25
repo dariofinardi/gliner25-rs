@@ -12,7 +12,7 @@ every figure as an indication of magnitude, not a measurement.
 | GPU | NVIDIA RTX 3090, 24 GB, device 1, idle |
 | ONNX Runtime | 1.25.1 CPU wheel; 1.23.2 GPU wheel for CUDA |
 | CUDA | 12.8, cuDNN 9 |
-| crate | `gliner25-core`, `ort` 2.0.0-rc.13, `load-dynamic` |
+| crate | `gliner25-rs`, `ort` 2.0.0-rc.13, `load-dynamic` |
 
 An RTX 3090 is a 2020 consumer part whose performance class sits close to an
 **NVIDIA L4** — what a good deal of cloud inference runs on today. Comparable
@@ -135,7 +135,7 @@ will differ by more than their length suggests.
 ```sh
 ORT_DYLIB_PATH=/path/to/libonnxruntime.so \
 GLINER2_DEVICE=cuda:1 GLINER2_PRECISION=fp32 \
-cargo run --release --example bench -p gliner25-core -- models/gliner2.5-multi-v1-onnx 25
+cargo run --release --example bench -p gliner25-rs -- models/gliner2.5-multi-v1-onnx 25
 ```
 
 The GPU run needs a runtime shipping the CUDA provider — the plain `onnxruntime`
