@@ -1,0 +1,11 @@
+/target/
+**/*.rs.bk
+*.onnx
+*.onnx.data
+*.safetensors
+*.bin
+*.pt
+tokenizer.json
+models/
+__pycache__/
+.DS_Store
