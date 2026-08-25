@@ -160,6 +160,17 @@ Type Error: Type (tensor(float16)) of output arg (val_684) of node
 `export_boundary_v1.py::_fix_constant_of_shape` materialises the attribute in
 the declared type. Without it every FP16 boundary head is unusable.
 
+### Multi-label classification falls back to the argmax
+
+gliner2's multi-label decoding never returns an empty list: **when no label
+clears the threshold, the top-scoring one is returned anyway**. Threshold the
+scores yourself and you will silently disagree with the reference
+implementation. Use [`BoundaryOutput::verdict`], which implements the rule.
+
+Relatedly, `multi_label` belongs to the task rather than the request — a single
+call routinely mixes single-label and multi-label tasks — hence
+`SchemaTask::classification` and `SchemaTask::multi_label_classification`.
+
 ### Overlap policies
 
 `flat` is **not** a greedy NMS: it is weighted interval scheduling, the

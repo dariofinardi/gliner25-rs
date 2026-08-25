@@ -76,7 +76,11 @@ pub struct BoundaryParams {
     /// `null_logit` beats its best candidate logit yields no mention.
     pub use_abstention: bool,
     pub classification_temperature: f32,
-    pub multi_label: bool,
+    /// Overrides the per-task `multi_label` flag carried by
+    /// [`SchemaTask::Classifications`]. Leave it `None` — the schema is the
+    /// right place for that decision, since a single request routinely mixes
+    /// single-label and multi-label tasks.
+    pub multi_label_override: Option<bool>,
 }
 
 impl Default for BoundaryParams {
@@ -86,7 +90,7 @@ impl Default for BoundaryParams {
             overlap_policy: None,
             use_abstention: true,
             classification_temperature: 1.0,
-            multi_label: false,
+            multi_label_override: None,
         }
     }
 }
@@ -131,9 +135,37 @@ pub struct Classification {
 #[derive(Debug, Clone, Default)]
 pub struct BoundaryOutput {
     pub mentions: Vec<Mention>,
+    /// Every label of every classification task, with its probability. Use
+    /// [`BoundaryOutput::verdict`] to turn one task into the answer gliner2
+    /// would give.
     pub classifications: Vec<Classification>,
     /// Expected mention count per query, when the model exposes the count head.
     pub expected_counts: Vec<f32>,
+}
+
+impl BoundaryOutput {
+    /// The labels gliner2 would report for a classification task.
+    ///
+    /// Reproduces `_extract_classification_result`, including the detail that
+    /// is easy to miss: in multi-label mode, **when no label clears the
+    /// threshold the top-scoring one is returned anyway**. The list is never
+    /// empty. Thresholding the scores yourself and keeping the empty result
+    /// will silently disagree with the reference implementation.
+    ///
+    /// In single-label mode the argmax is returned, which is the same thing.
+    pub fn verdict(&self, task: &str, threshold: f32) -> Vec<&Classification> {
+        let mut rows: Vec<&Classification> =
+            self.classifications.iter().filter(|c| c.task == task).collect();
+        if rows.is_empty() {
+            return rows;
+        }
+        rows.sort_by(|a, b| {
+            b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let over: Vec<&Classification> =
+            rows.iter().copied().filter(|c| c.score >= threshold).collect();
+        if over.is_empty() { vec![rows[0]] } else { over }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -439,7 +471,8 @@ impl BoundaryEngine {
                 .iter()
                 .map(|&(flat, _)| logits[flat] / params.classification_temperature)
                 .collect();
-            let probs = if params.multi_label {
+            let multi_label = params.multi_label_override.unwrap_or(task.multi_label);
+            let probs = if multi_label {
                 scaled.iter().copied().map(sigmoid).collect::<Vec<_>>()
             } else {
                 softmax(&scaled)

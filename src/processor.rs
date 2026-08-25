@@ -54,7 +54,29 @@ pub enum SchemaTask {
     /// Roles become `[R]` markers.
     Relations(String, Vec<String>),
     /// Classification: task name plus choices. Choices become `[L]` markers.
-    Classifications(String, Vec<String>),
+    ///
+    /// `multi_label` decides how the logits are normalised: independent
+    /// sigmoids when true, a softmax over the choices when false. gliner2
+    /// carries this per task, not per request — `prompt_safety` is
+    /// single-label while `prompt_toxicity` and `jailbreak_detection` are
+    /// multi-label, and they are routinely passed in the same call.
+    Classifications {
+        task: String,
+        labels: Vec<String>,
+        multi_label: bool,
+    },
+}
+
+impl SchemaTask {
+    /// Single-label classification (softmax over the choices).
+    pub fn classification(task: impl Into<String>, labels: Vec<String>) -> Self {
+        Self::Classifications { task: task.into(), labels, multi_label: false }
+    }
+
+    /// Multi-label classification (independent sigmoids).
+    pub fn multi_label_classification(task: impl Into<String>, labels: Vec<String>) -> Self {
+        Self::Classifications { task: task.into(), labels, multi_label: true }
+    }
 }
 
 impl SchemaTask {
@@ -62,7 +84,7 @@ impl SchemaTask {
         match self {
             Self::Entities(_) => TaskType::Entities,
             Self::Relations(..) => TaskType::Relations,
-            Self::Classifications(..) => TaskType::Classifications,
+            Self::Classifications { .. } => TaskType::Classifications,
         }
     }
 
@@ -70,7 +92,7 @@ impl SchemaTask {
         match self {
             Self::Entities(_) => E_TOKEN,
             Self::Relations(..) => R_TOKEN,
-            Self::Classifications(..) => L_TOKEN,
+            Self::Classifications { .. } => L_TOKEN,
         }
     }
 
@@ -80,7 +102,7 @@ impl SchemaTask {
             // Python uses the literal "entities" as the group name.
             Self::Entities(_) => "entities".to_string(),
             Self::Relations(name, _) => name.clone(),
-            Self::Classifications(name, _) => name.clone(),
+            Self::Classifications { task, .. } => task.clone(),
         }
     }
 
@@ -88,7 +110,7 @@ impl SchemaTask {
         match self {
             Self::Entities(v) => v,
             Self::Relations(_, v) => v,
-            Self::Classifications(_, v) => v,
+            Self::Classifications { labels, .. } => labels,
         }
     }
 }
@@ -110,6 +132,8 @@ pub struct TaskMapping {
     pub prompt_tok_idx: usize,
     /// Sub-token positions of the child markers (`[E]`/`[R]`/`[L]`), one per label.
     pub field_tok_indices: Vec<usize>,
+    /// For classification groups, whether the choices are scored independently.
+    pub multi_label: bool,
 }
 
 /// Tokenization result: everything the engine needs.
@@ -336,6 +360,10 @@ impl SchemaTransformer {
                     prompt_tok_idx: prompt_positions[g]
                         .ok_or_else(|| anyhow!("missing [P] marker for group {g}"))?,
                     field_tok_indices: field_positions[g].clone(),
+                    multi_label: matches!(
+                        task,
+                        SchemaTask::Classifications { multi_label: true, .. }
+                    ),
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -387,8 +415,8 @@ mod tests {
                 "organization".into(),
                 "location".into(),
             ]),
-            SchemaTask::Classifications(
-                "sentiment".into(),
+            SchemaTask::classification(
+                "sentiment",
                 vec!["positive".into(), "negative".into()],
             ),
         ];
