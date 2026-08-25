@@ -77,6 +77,16 @@ pub fn download(model: Model, precision: Precision) -> Result<PathBuf> {
             GlinerError::Hub(format!("{}: could not fetch {file} ({e})", model.repo_id)).into()
         })
     };
+    // A fragment past the 2 GB protobuf limit keeps its weights in a sidecar
+    // `.onnx.data`, which ONNX Runtime opens by relative name at session build
+    // time. Most fragments have none, so a miss is not an error - but a fragment
+    // that has one and does not get it fails at load, not at download, with a
+    // filesystem error naming a file nobody asked for.
+    let fetch_onnx = |file: &str| -> Result<PathBuf> {
+        let path = fetch(file)?;
+        let _ = repo.get(&format!("{file}.data"));
+        Ok(path)
+    };
 
     // The manifest first: it is what says which heads exist.
     let manifest_path = fetch("boundary_manifest.json")?;
@@ -87,10 +97,10 @@ pub fn download(model: Model, precision: Precision) -> Result<PathBuf> {
 
     let sfx = precision.suffix();
     for stem in FRAGMENTS {
-        fetch(&format!("{stem}{sfx}.onnx"))?;
+        fetch_onnx(&format!("{stem}{sfx}.onnx"))?;
     }
     for bucket in &manifest.length_buckets {
-        fetch(&format!("boundary_head_L{bucket}{sfx}.onnx"))?;
+        fetch_onnx(&format!("boundary_head_L{bucket}{sfx}.onnx"))?;
     }
     fetch("tokenizer.json")?;
 

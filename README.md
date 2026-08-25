@@ -5,8 +5,8 @@
 
 **Native Rust inference for GLiNER2.5 on ONNX Runtime**
 
-Entity extraction with no Python at inference time. This repository is a Cargo
-workspace: a shared foundation, the boundary engine, and a thin extension on top.
+Entity extraction with no Python at inference time. One crate: the boundary
+engine, with the schema families behind a default-on feature.
 
 Written by **Dario Finardi**. Published by **Jugaad s.r.l.**, which uses it in
 production inside **Edito** and **Omissis** —
@@ -25,13 +25,13 @@ For GLiNER2 `span` checkpoints use
 
 ```toml
 [dependencies]
-gliner25-rs = "0.2"
+gliner25-rs = "0.3"
 ```
 
-`gliner25-rs` never touches the network: it loads a model from a local directory
-and has no HTTP client, no TLS stack and no Hub client in its dependency tree.
-Fetch the ONNX export however you like — `hf download`, `git clone`, a build
-step — and hand it the path.
+`gliner25-rs` loads a model from a local directory, and fetches it from the Hub
+if that directory is empty — see [Getting the weights](#getting-the-weights).
+Switch the `hub` feature off and the crate has no HTTP client, no TLS stack and
+no Hub client in its dependency tree at all.
 
 One model, one crate. Prompt construction, `ort` helpers, overlap policies and
 schema families all live in it rather than in separate packages — 0.1 split them
@@ -43,6 +43,67 @@ four modules that change rarely. The cost is real and worth stating: **a fix to
 those modules has to land in both repositories.** It has happened twice already —
 the cross-label suppression rule and the multi-label argmax fallback — so treat
 them as a pair when changing anything below the engine.
+
+---
+
+## Getting the weights
+
+Point the engine at a directory. If it holds an export, it is used untouched.
+If it does not, the export is fetched from the Hub before the engine starts:
+
+```rust
+use gliner25_rs::{BoundaryConfig, BoundaryEngine, hub};
+
+let cfg = BoundaryConfig::new("models/gliner2.5-onnx").or_download(hub::GLINER25_MULTI_V1);
+let mut engine = BoundaryEngine::new(cfg)?;   // downloads only if the directory is empty
+```
+
+Skip the local path entirely and work straight out of the cache:
+
+```rust
+let mut engine = BoundaryEngine::new(BoundaryConfig::from_hub(hub::GLINER25_MULTI_V1))?;
+```
+
+**The local directory always wins.** A checkout already on disk is never
+re-fetched, and the network is reached only on a miss. Files land in the shared
+Hub cache (`HF_HOME`, else `~/.cache/huggingface`), so a model already pulled by
+the Python library is not pulled again.
+
+`hub::GLINER25_MULTI_V1` is
+[`jugaadsrl/gliner2.5-multi-v1-onnx`](https://huggingface.co/jugaadsrl/gliner2.5-multi-v1-onnx).
+Any other repository works — `hub::Model::new(repo_id)` takes a private
+fine-tune as readily as a published one.
+
+Try it:
+
+```sh
+ORT_DYLIB_PATH=… cargo run --release --example download -p gliner25-rs -- models/gliner2.5-onnx
+```
+
+### Length buckets are read, not guessed
+
+A boundary export ships one head per length bucket, and which buckets exist is a
+property of the export. `boundary_manifest.json` is therefore fetched and parsed
+first, and only the heads it declares are requested. Fragments whose weights sit
+past the 2 GB protobuf limit carry a sidecar `.onnx.data`, which is fetched with
+them — without it the download succeeds and the *session build* fails, with a
+filesystem error naming a file nobody asked for.
+
+### If you would rather it never touched the network
+
+```toml
+gliner25-rs = { version = "0.3", default-features = false, features = ["families"] }
+```
+
+That removes `hf-hub`, `ureq` and `rustls` and leaves the crate with no network
+stack whatsoever.
+
+### On the TLS backend
+
+`hf-hub` arrives with `default-features = false, features = ["ureq"]`, which
+resolves TLS through **`rustls`**. Its default feature set pulls `native-tls`
+and with it `openssl` — a C library and the CVE stream that comes with it — for
+no benefit here.
 
 ---
 
