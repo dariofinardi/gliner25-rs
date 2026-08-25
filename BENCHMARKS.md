@@ -1,6 +1,10 @@
 # Benchmarks
 
-Measured 2026-08-25 with `cargo run --release --example bench -p gliner25-core`.
+Measured 2026-08-25 on a **shared development machine** — other users on some
+cores, a training job on the other GPU. The figures below are an indication of
+magnitude, not a clean measurement; see the caveats.
+
+Measured with `cargo run --release --example bench -p gliner25-core`.
 Read the caveats before quoting any of it — for this repository they are larger
 than the numbers.
 
@@ -14,9 +18,26 @@ than the numbers.
 | CUDA | 12.8, cuDNN 9 |
 | crate | `gliner25-core`, `ort` 2.0.0-rc.13, `load-dynamic` |
 
-Device 0, an RTX 4090, was running an unrelated multi-day training job and was
-deliberately left alone. `GLINER2_DEVICE=cuda:1` pins the benchmark to the idle
-card.
+Device 0, an RTX 4090, was carrying an unrelated multi-day training job and was
+deliberately left alone; `GLINER2_DEVICE=cuda:1` pins the benchmark to the 3090,
+which was idle. The host itself is shared, so the CPU cores were not exclusively
+available — which is why the CPU figures are the unreliable ones here, and the
+GPU figures the more usable.
+
+### About the card
+
+An RTX 3090 is a 2020 consumer part, not a datacenter accelerator, and it is the
+slower end of what you would deploy on. Its performance class sits close to an
+**NVIDIA L4**, which is what a good deal of cloud inference actually runs on
+today — GCP G2, AWS G6 and similar. The two are within the same range on FP32
+throughput; the 3090 has substantially more memory bandwidth, the L4 draws a
+fraction of the power.
+
+For this workload the distinction matters less than it looks. The span pipeline
+is bound by kernel launches and host round-trips across eight ONNX sessions, not
+by arithmetic or bandwidth, so a faster card moves these numbers less than
+implementing `IoBinding` would. Read the GPU figures as *what a realistic
+inference instance gives you*, not as a ceiling — and not as a best case either.
 
 ## Method
 
@@ -40,10 +61,12 @@ Load time is 8–13 s in every configuration.
 
 ## These numbers are not trustworthy yet
 
-**The machine was contended throughout.** Load average held at 18 on 32 threads
-for the whole run — dozens of PyTorch dataloader workers from the training job
-on device 0. Two things in the table say plainly that the measurement is
-polluted:
+**This is a shared development machine, not a benchmark rig.** Other users had
+work on some of the cores, and the other GPU was carrying a training job for the
+whole run. Load average held at 18 on 32 threads. Treat every figure here as an
+**order-of-magnitude indication**, not a measurement.
+
+Two things in the table say plainly that it is polluted:
 
 - **p95 is 3–6× the median in every row.** That spread is scheduling, not the
   engine.
