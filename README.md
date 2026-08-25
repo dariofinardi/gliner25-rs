@@ -122,18 +122,42 @@ remedy.
 
 ## Performance
 
-Measured on an RTX 3090 and a Ryzen 9 5900XT, with the caveats that matter — the
-host was under load 18 throughout, so the CPU figures are an upper bound and
-some GPU rows are noise. See [`BENCHMARKS.md`](BENCHMARKS.md) for the full table
-and what can and cannot be concluded from it.
+On an RTX 3090, one ~90-word paragraph, five entity labels, 14 mentions:
+**17.9 ms** in `fp32`, 18.6 ms in `fp16`, 20.3 ms in `fp16_iobinding`. The three
+sit within 13% of each other, which is inside what a shared host moves on its
+own — do not pick a precision from that.
 
-The short version for this repository: **the timing figures are not usable.**
-Two runs of the same matrix an hour apart differ by up to 4× on identical
-configurations, and CPU comes out ahead of GPU — which for a 190 M-parameter
-encoder is not a result, it is contention. Profiling ruled out provider fallback
-(97% of nodes do run on CUDA) and graph size (the two architectures are within
-15% of each other), so the span/boundary gap remains unexplained and needs an
-idle machine to settle.
+### Against the span architecture, at parity
+
+Same paragraph, same five labels, same precision, same host, same card, compared
+with [gliner2-rs](https://github.com/dariofinardi/gliner2-rs) running
+`GLiNER2-Guardrails-PII-Multi`, which is likewise a flat export:
+
+| device | precision | span (GLiNER2) | boundary (GLiNER2.5) | ratio |
+|---|---|---|---|---|
+| RTX 3090 | `fp32` | 26.5 ms | **17.9 ms** | 1.5× |
+| RTX 3090 | `fp16` | 55.4 ms | **18.6 ms** | 3.0× |
+| RTX 3090 | `fp16_iobinding` | 20.6 ms | 20.3 ms | 1.0× |
+| Ryzen 5900XT | `fp32` | 2608 ms | **1179 ms** | 2.2× |
+| Ryzen 5900XT | `fp16` | 2641 ms | **630 ms** | 4.2× |
+| Ryzen 5900XT | `fp16_iobinding` | 3165 ms | **635 ms** | 5.0× |
+
+Boundary is faster in every configuration but one, and the gap widens on CPU.
+That follows from what the two pipelines do: span enumerates every span up to
+eight words wide, scores each against every label and runs a GRU over twenty
+occurrence slots — 1227 nodes around the encoder. Boundary proposes 192
+candidates once, shared across all queries, and scores each pair — 480 nodes.
+
+**This is not a quality comparison.** The two models find different entities, 13
+against 14, because they are different checkpoints with different training. It
+measures the architectures on one paragraph, and says nothing about which
+extracts better. It is also one text at one length: span cost grows with the
+number of schema tasks, boundary cost is dominated by the bucket it lands in, so
+a different workload can move the ordering.
+
+The host was shared and under load throughout; see [`BENCHMARKS.md`](BENCHMARKS.md)
+for the caveats, and for the harness bug that made an earlier revision of this
+table say the opposite.
 
 ## Verification
 
