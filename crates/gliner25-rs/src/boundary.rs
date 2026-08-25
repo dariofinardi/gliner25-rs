@@ -50,8 +50,8 @@ use crate::processor::{SchemaTask, SchemaTransformer, TaskType};
 use crate::chunker::Chunker;
 use crate::chain::{Carrier, Chain, ExecutionMode, Feed, Sink};
 use crate::runtime::{
-    IoDType, Precision, build_session, float_tensor, i64_tensor, resolve_aux, resolve_fragment,
-    resolve_tokenizer, sigmoid, softmax, take_bool, take_float, take_i64,
+    IoDType, Precision, build_session, i64_tensor, resolve_aux, resolve_fragment,
+    resolve_tokenizer, sigmoid, softmax,
 };
 
 /// `boundary_manifest.json`, written by `export_boundary_v1.py`.
@@ -267,7 +267,6 @@ pub struct BoundaryEngine {
     dtype: IoDType,
     dir: PathBuf,
     precision: Precision,
-    suffix: &'static str,
     intra_threads: usize,
     default_policy: OverlapPolicy,
 }
@@ -367,7 +366,6 @@ impl BoundaryEngine {
             dtype: config.precision.io_dtype(),
             dir,
             precision: config.precision,
-            suffix: sfx,
             intra_threads: config.intra_threads,
             default_policy,
         })
