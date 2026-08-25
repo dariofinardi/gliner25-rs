@@ -1,12 +1,8 @@
 [workspace]
 resolver = "3"
 members = [
-    # Foundation, shared with gliner2-rs. It is kept here as a copy only until
-    # gliner-core is published: at that point this workspace should depend on
-    # it from crates.io instead, because a second copy is exactly how the two
-    # drifted apart before.
-    "crates/gliner-core",
-    # boundary architecture (GLiNER2.5) and its extension
+    # the engine: prompt construction, ort helpers, overlap policies, boundary
+    # inference. Self-contained, so it publishes under one name.
     "crates/gliner25-core",
     "crates/gliner25",
 ]

@@ -21,16 +21,19 @@ For GLiNER2 `span` checkpoints use
 
 | crate | what it is | docs |
 |---|---|---|
-| [`gliner-core`](crates/gliner-core) | prompt construction, ONNX Runtime helpers, overlap policies | [README](crates/gliner-core/README.md) |
-| [`gliner25-core`](crates/gliner25-core) | the boundary inference engine | [README](crates/gliner25-core/README.md) |
+| [`gliner25-core`](crates/gliner25-core) | the engine: prompt construction, ONNX Runtime helpers, overlap policies, boundary inference | [README](crates/gliner25-core/README.md) |
 | [`gliner25`](crates/gliner25) | schema families and merging | [README](crates/gliner25/README.md) |
 
-One model, three crates — deliberately. The layering is not for this repository's
-sake: `gliner-core` is shared with `gliner2-rs`, and keeping the seam visible is
-what will let this workspace depend on it from crates.io once it is published,
-rather than carrying a copy. **Today it is a copy**, and that is the one piece of
-duplication the split does not remove. A second copy is exactly how the two
-drifted apart before.
+One model, two crates. `gliner25-core` is self-contained: prompt construction,
+`ort` helpers and overlap policies live in it rather than in a crate shared with
+[gliner2-rs](https://github.com/dariofinardi/gliner2-rs).
+
+That is a deliberate trade. A shared crate would have to be published under a
+single name and would tie the two repositories' release cadences together, for
+four modules that change rarely. The cost is real and worth stating: **a fix to
+those modules has to land in both repositories.** It has happened twice already —
+the cross-label suppression rule and the multi-label argmax fallback — so treat
+them as a pair when changing anything below the engine.
 
 ---
 
