@@ -173,6 +173,9 @@ pub struct BoundaryConfig {
     pub models_dir: PathBuf,
     pub precision: Precision,
     pub intra_threads: usize,
+    /// Where to fetch the export from if `models_dir` does not hold one.
+    #[cfg(feature = "hub")]
+    pub hub: Option<crate::hub::Model>,
     /// Loads only the heads actually needed instead of every bucket, which
     /// shortens start-up when there are many buckets.
     pub lazy_heads: bool,
@@ -182,7 +185,33 @@ impl BoundaryConfig {
     pub fn new(models_dir: impl Into<PathBuf>) -> Self {
         let models_dir = models_dir.into();
         let precision = Precision::autodetect(&models_dir, "encoder");
-        Self { models_dir, precision, intra_threads: 4, lazy_heads: true }
+        Self {
+            models_dir,
+            precision,
+            intra_threads: 4,
+            lazy_heads: true,
+            #[cfg(feature = "hub")]
+            hub: None,
+        }
+    }
+
+    /// Fetches the export straight from the Hub, into the shared cache.
+    ///
+    /// Nothing is downloaded until [`BoundaryEngine::new`] runs, so
+    /// `with_precision` still applies to what gets fetched.
+    #[cfg(feature = "hub")]
+    pub fn from_hub(model: crate::hub::Model) -> Self {
+        Self::new(PathBuf::new()).or_download(model)
+    }
+
+    /// Names the repository to fall back to when `models_dir` holds no export.
+    ///
+    /// The local directory always wins: a checkout already on disk is used as
+    /// it is, and the network is touched only when the export is missing.
+    #[cfg(feature = "hub")]
+    pub fn or_download(mut self, model: crate::hub::Model) -> Self {
+        self.hub = Some(model);
+        self
     }
 
     pub fn with_precision(mut self, precision: Precision) -> Self {
@@ -219,6 +248,18 @@ pub struct BoundaryEngine {
 
 impl BoundaryEngine {
     pub fn new(config: BoundaryConfig) -> Result<Self> {
+        #[allow(unused_mut)]
+        let mut config = config;
+
+        // A directory that already holds the export is used untouched; only a
+        // missing one reaches the network.
+        #[cfg(feature = "hub")]
+        if let Some(model) = config.hub {
+            if !config.models_dir.join("boundary_manifest.json").exists() {
+                config.models_dir = crate::hub::download(model, config.precision)?;
+            }
+        }
+
         let dir = config.models_dir.clone();
         let sfx = config.precision.suffix();
 

@@ -21,15 +21,23 @@ half.workspace = true
 regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+hf-hub = { workspace = true, optional = true }
 
 [features]
-default = ["families"]
+default = ["families", "hub"]
 
 # Schema families. On by default: anyone passing a wide schema to this model
 # wants them, and they are a few helpers with no extra dependencies. A feature
 # rather than a separate crate because splitting produced a package that was
 # only ever installed alongside the engine.
 families = []
+
+# Fetches a published export from the Hub when the model directory is empty.
+# On by default: a crate that cannot obtain its own weights makes every caller
+# write the same download step. `hf-hub` comes in without default features, so
+# TLS resolves through `rustls` and no `openssl` enters the tree. Switching the
+# feature off leaves the crate with no network stack at all.
+hub = ["dep:hf-hub"]
 
 # Helpers that locate a tokenizer.json under the workspace, for pinning the
 # prompt layout against the same ground truth from outside the crate.
