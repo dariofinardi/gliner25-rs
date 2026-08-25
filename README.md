@@ -378,6 +378,42 @@ Needs `torch`, `transformers`, `gliner2>=2.0.0`, `onnx`, `onnxruntime`,
 `onnxscript`. It refuses `span` checkpoints rather than producing a silently
 wrong export.
 
+### Deriving FP16 from an FP32 export
+
+The exporter emits all three precisions, but it needs the PyTorch checkpoint.
+When you have the ONNX and not the checkpoint — the published
+[`jugaadsrl/gliner2.5-multi-v1-onnx`](https://huggingface.co/jugaadsrl/gliner2.5-multi-v1-onnx)
+ships FP32 only — derive them from what you have:
+
+```sh
+python onnx_conversion_scripts/downcast_fp16.py <export_dir> --out models/g25-fp16
+```
+
+Needs only `onnx`, `onnxruntime` and `numpy`. It writes both variants beside
+each fragment, repairs the `ConstantOfShape` nodes the FP16 converter leaves
+inconsistent, and copies `tokenizer.json` and `boundary_manifest.json` so the
+output directory loads as it stands.
+
+Measured on the published export: **1141 MB → 574 MB**, exactly half, the
+encoder accounting for nearly all of it (1111 → 556 MB).
+
+Accuracy against the FP32 reference over the 12-case suite, on `cuda:1`:
+
+| | |
+|---|---|
+| spans | **41/41**, none lost, none added |
+| largest score delta | 0.0017 |
+| mean score delta | 0.0002 |
+
+`_fp16` and `_fp16_iobinding` agreed with each other exactly.
+
+**No speed claim, deliberately.** Repeated interleaved runs on this host put
+FP16 anywhere between 9.6 and 16.5 ms while FP32 sat at 13–15 ms: the spread
+*within* one precision covered the differences *between* them. The GPU was idle
+at the time, so what moves the numbers is host-side contention at load average
+16–17, and any ranking taken from that would be an artefact. What the script
+buys you for certain is half the disk and half the device memory.
+
 Three things the exporter has to work around, each documented in its module
 docstring: `torch.export` specialises `num_words`, so heads are emitted per
 length bucket; ONNX has no stable Sort, so `stable=True` is stripped and pool

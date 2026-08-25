@@ -3,7 +3,7 @@
 //! `onnx_conversion_scripts/compare_with_pytorch.py`.
 //!
 //! ```sh
-//! ORT_DYLIB_PATH=… cargo run --release --example dump_json -p gliner25-core -- <models_dir> <cases.json>
+//! ORT_DYLIB_PATH=… cargo run --release --example dump_json -p gliner25-rs -- <models_dir> <cases.json>
 //! ```
 
 use gliner25_rs::{BoundaryConfig, BoundaryEngine, BoundaryParams, SchemaTask};
