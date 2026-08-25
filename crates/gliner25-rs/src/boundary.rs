@@ -49,8 +49,8 @@ use crate::overlap::{OverlapPolicy, Spanned, resolve_overlaps};
 use crate::processor::{SchemaTask, SchemaTransformer, TaskType};
 use crate::chain::{Carrier, Chain, ExecutionMode, Feed, Sink};
 use crate::runtime::{
-    IoDType, Precision, build_session, float_tensor, i64_tensor, sigmoid, softmax, take_bool,
-    take_float, take_i64,
+    IoDType, Precision, build_session, float_tensor, i64_tensor, resolve_aux, resolve_fragment,
+    resolve_tokenizer, sigmoid, softmax, take_bool, take_float, take_i64,
 };
 
 /// `boundary_manifest.json`, written by `export_boundary_v1.py`.
@@ -255,6 +255,7 @@ pub struct BoundaryEngine {
     manifest: BoundaryManifest,
     dtype: IoDType,
     dir: PathBuf,
+    precision: Precision,
     suffix: &'static str,
     intra_threads: usize,
     default_policy: OverlapPolicy,
@@ -269,7 +270,9 @@ impl BoundaryEngine {
         // missing one reaches the network.
         #[cfg(feature = "hub")]
         if let Some(model) = config.hub {
-            if !config.models_dir.join("boundary_manifest.json").exists() {
+            if resolve_aux(&config.models_dir, "boundary_manifest.json", config.precision)
+                .is_none()
+            {
                 config.models_dir = crate::hub::download(model, config.precision)?;
             }
         }
@@ -277,15 +280,16 @@ impl BoundaryEngine {
         let dir = config.models_dir.clone();
         let sfx = config.precision.suffix();
 
-        let manifest_path = dir.join("boundary_manifest.json");
-        if !manifest_path.exists() {
-            return Err(GlinerError::IncompleteModelDir(format!(
-                "boundary_manifest.json missing in {}; the directory does not hold \
-                 a boundary export",
-                dir.display()
-            ))
-            .into());
-        }
+        // Both layouts are accepted: flat, as the exporter writes it, and the
+        // fp32_v2/ + fp16_v2/ subfolders the published gliner2 exports use.
+        let manifest_path = resolve_aux(&dir, "boundary_manifest.json", config.precision)
+            .ok_or_else(|| {
+                GlinerError::IncompleteModelDir(format!(
+                    "boundary_manifest.json not found in {} nor in its variant \
+                     subfolders; the directory does not hold a boundary export",
+                    dir.display()
+                ))
+            })?;
         let manifest: BoundaryManifest =
             serde_json::from_slice(&std::fs::read(&manifest_path)?)?;
         if manifest.architecture != "boundary" {
@@ -300,11 +304,24 @@ impl BoundaryEngine {
             anyhow!("overlap_policy '{}' not recognised", manifest.overlap_policy)
         })?;
 
-        let tok_path = dir.join("tokenizer.json");
+        let tok_path = resolve_tokenizer(&dir, config.precision).ok_or_else(|| {
+            GlinerError::IncompleteModelDir(format!(
+                "tokenizer.json not found in {} nor in its variant subfolders",
+                dir.display()
+            ))
+        })?;
         let transformer = SchemaTransformer::from_tokenizer_file(&tok_path)?;
 
         let load = |stem: &str| -> Result<Session> {
-            build_session(&dir.join(format!("{stem}{sfx}.onnx")), config.intra_threads)
+            let path = resolve_fragment(&dir, stem, config.precision).ok_or_else(|| {
+                GlinerError::IncompleteModelDir(format!(
+                    "fragment '{stem}{sfx}' not found in {} (looked in the directory \
+                     itself and in {}/)",
+                    dir.display(),
+                    config.precision.legacy_subdir(),
+                ))
+            })?;
+            build_session(&path, config.intra_threads)
         };
 
         let mut buckets: Vec<usize> = manifest.length_buckets.clone();
@@ -315,10 +332,7 @@ impl BoundaryEngine {
             let session = if config.lazy_heads {
                 None
             } else {
-                Some(build_session(
-                    &dir.join(format!("boundary_head_L{b}{sfx}.onnx")),
-                    config.intra_threads,
-                )?)
+                Some(load(&format!("boundary_head_L{b}"))?)
             };
             heads.push((*b, session));
         }
@@ -333,6 +347,7 @@ impl BoundaryEngine {
             manifest,
             dtype: config.precision.io_dtype(),
             dir,
+            precision: config.precision,
             suffix: sfx,
             intra_threads: config.intra_threads,
             default_policy,
@@ -627,9 +642,14 @@ impl BoundaryEngine {
             .position(|(b, _)| *b == bucket)
             .ok_or_else(|| anyhow!("bucket {bucket} not present"))?;
         if self.heads[slot].1.is_none() {
-            let path = self
-                .dir
-                .join(format!("boundary_head_L{bucket}{}.onnx", self.suffix));
+            let stem = format!("boundary_head_L{bucket}");
+            let path = resolve_fragment(&self.dir, &stem, self.precision).ok_or_else(|| {
+                GlinerError::IncompleteModelDir(format!(
+                    "head for bucket {bucket} not found in {} nor in {}/",
+                    self.dir.display(),
+                    self.precision.legacy_subdir(),
+                ))
+            })?;
             self.heads[slot].1 = Some(build_session(&path, self.intra_threads)?);
         }
         Ok(slot)

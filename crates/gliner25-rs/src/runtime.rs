@@ -56,15 +56,23 @@ impl Precision {
 
     /// Subfolder a legacy export keeps this variant in.
     ///
-    /// Exports published before the flat layout group the fragments into
-    /// `fp32_v2/` and `fp16_v2/`, the latter holding both the `_fp16` and the
-    /// `_fp16_iobinding` files. `jugaadsrl/gliner2-privacy-filter-PII-multi-onnx`
-    /// is laid out that way.
-    pub fn legacy_subdir(self) -> &'static str {
+    /// Subfolders this variant may live in, in search order.
+    ///
+    /// An export can be flat or grouped by precision, and the group names
+    /// differ by lineage: the GLiNER2.5 exports use `fp32_25/` and `fp16_25/`,
+    /// the GLiNER2 ones `fp32_v2/` and `fp16_v2/`. Both are accepted, so a
+    /// directory copied from either family loads without being renamed. The
+    /// FP16 folder holds `_fp16` and `_fp16_iobinding` together.
+    pub fn subdirs(self) -> &'static [&'static str] {
         match self {
-            Self::Fp32 => "fp32_v2",
-            Self::Fp16 | Self::Fp16IoBinding => "fp16_v2",
+            Self::Fp32 => &["fp32_25", "fp32_v2"],
+            Self::Fp16 | Self::Fp16IoBinding => &["fp16_25", "fp16_v2"],
         }
+    }
+
+    /// The subfolder this crate's own exports are written into.
+    pub fn legacy_subdir(self) -> &'static str {
+        self.subdirs()[0]
     }
 
     /// Picks the best variant available for the current platform.
@@ -118,9 +126,11 @@ pub fn resolve_fragment(dir: &Path, stem: &str, precision: Precision) -> Option<
     if flat.exists() {
         return Some(flat);
     }
-    let nested = dir.join(precision.legacy_subdir()).join(&file);
-    if nested.exists() {
-        return Some(nested);
+    for sub in precision.subdirs() {
+        let nested = dir.join(sub).join(&file);
+        if nested.exists() {
+            return Some(nested);
+        }
     }
     None
 }
@@ -128,17 +138,25 @@ pub fn resolve_fragment(dir: &Path, stem: &str, precision: Precision) -> Option<
 /// Locates the tokenizer, which the legacy layout keeps inside each variant
 /// subfolder rather than at the root.
 pub fn resolve_tokenizer(dir: &Path, precision: Precision) -> Option<PathBuf> {
-    for candidate in [
-        dir.join("tokenizer.json"),
-        dir.join(precision.legacy_subdir()).join("tokenizer.json"),
-        dir.join("fp32_v2").join("tokenizer.json"),
-        dir.join("fp16_v2").join("tokenizer.json"),
-    ] {
-        if candidate.exists() {
-            return Some(candidate);
-        }
+    resolve_aux(dir, "tokenizer.json", precision)
+}
+
+/// Locates a precision-independent file that sits beside the fragments.
+///
+/// `boundary_manifest.json` is the same whatever precision is loaded, but an
+/// export organised into `fp32_v2/` and `fp16_v2/` keeps a copy in each rather
+/// than one at the root, so both places have to be tried.
+pub fn resolve_aux(dir: &Path, name: &str, precision: Precision) -> Option<PathBuf> {
+    let mut candidates = vec![dir.join(name)];
+    // The requested precision's folders first, then the other family's, so a
+    // half-populated export still resolves rather than failing outright.
+    for sub in precision.subdirs() {
+        candidates.push(dir.join(sub).join(name));
     }
-    None
+    for sub in ["fp32_25", "fp16_25", "fp32_v2", "fp16_v2"] {
+        candidates.push(dir.join(sub).join(name));
+    }
+    candidates.into_iter().find(|c| c.exists())
 }
 
 /// Which execution providers to register, from `GLINER2_DEVICE`.

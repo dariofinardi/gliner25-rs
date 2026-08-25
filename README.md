@@ -397,6 +397,60 @@ output directory loads as it stands.
 Measured on the published export: **1141 MB → 574 MB**, exactly half, the
 encoder accounting for nearly all of it (1111 → 556 MB).
 
+#### Layout
+
+The result is grouped by precision, the way the published GLiNER2 exports are,
+with names that say which lineage it belongs to:
+
+```
+gliner2.5-multi-v1-onnx/
+├── fp32_25/                       13 files, 1157 MB
+│   ├── encoder_fp32.onnx  (+ .data)
+│   ├── boundary_head_L{64,128,256,512}_fp32.onnx  (+ .data)
+│   ├── routed_gather_fp32.onnx, classifier_fp32.onnx
+│   ├── tokenizer.json
+│   └── boundary_manifest.json
+└── fp16_25/                       16 files, 1163 MB
+    ├── *_fp16.onnx                keep_io_types — FP32 in/out
+    ├── *_fp16_iobinding.onnx      FP16 throughout
+    ├── tokenizer.json
+    └── boundary_manifest.json
+```
+
+`fp16_25/` is not smaller than `fp32_25/` because it holds *two* variants at
+574 MB each. Either folder is a complete export: `tokenizer.json` and
+`boundary_manifest.json` are in both, so one can be downloaded without the
+other.
+
+The engine reads either shape. Point it at the parent and it picks the
+subfolder matching the precision; point it at `fp16_25/` alone and it loads
+that. A flat directory still works, and so does GLiNER2's `fp32_v2/`,
+`fp16_v2/` naming — nothing needs renaming to be loadable.
+
+#### Uploading to the Hub
+
+```sh
+pip install -U "huggingface_hub[cli]"
+hf auth login                       # or HF_TOKEN=…
+
+hf upload jugaadsrl/gliner2.5-multi-v1-onnx models/g25-fp16/fp16_25 fp16_25 \
+    --repo-type model \
+    --commit-message "Add FP16 and FP16-IOBinding variants"
+```
+
+Upload the folders separately rather than the parent: `fp32_25/` is already on
+the Hub, and re-uploading a gigabyte that has not changed wastes everyone's
+bandwidth. Add `--include "*.onnx" --include "*.data" --include "*.json"` if the
+directory has picked up anything else.
+
+The `.data` sidecars must go up with their `.onnx` — a fragment whose weights
+sit outside the graph loads to a filesystem error naming a file the downloader
+never asked for. `hf upload` on a directory takes them along; a hand-picked file
+list is where they get missed.
+
+Then say so in the model card, since `Precision::autodetect` will start choosing
+FP16 on Linux and Windows the moment those files exist.
+
 Accuracy against the FP32 reference over the 12-case suite, on `cuda:1`:
 
 | | |

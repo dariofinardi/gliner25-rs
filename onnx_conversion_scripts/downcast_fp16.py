@@ -11,6 +11,13 @@ instance, ships FP32 only. It reads `*_fp32.onnx` and writes, beside them:
     *_fp16.onnx             keep_io_types=True  — FP16 weights, FP32 in/out
     *_fp16_iobinding.onnx   keep_io_types=False — FP16 throughout
 
+By default it also groups the result by precision — `fp32_25/` and `fp16_25/`,
+the latter holding both FP16 variants — following the shape the published
+GLiNER2 exports use (`fp32_v2/`, `fp16_v2/`) with names that say which lineage
+the export belongs to. Each folder carries its own `tokenizer.json` and
+`boundary_manifest.json`, so either one can be uploaded and loaded on its own.
+`--layout flat` keeps everything in a single directory instead.
+
 The two are not interchangeable. `_fp16` casts at every graph boundary, which
 CoreML requires and which costs a conversion per fragment. `_fp16_iobinding`
 leaves the boundaries in FP16 so a bound chain can hand one fragment's output
@@ -123,6 +130,13 @@ def main() -> int:
     ap.add_argument("export_dir", type=Path)
     ap.add_argument("--out", type=Path, default=None, help="write elsewhere (default: in place)")
     ap.add_argument("--only", nargs="*", default=None, help="convert just these stems")
+    ap.add_argument(
+        "--layout",
+        choices=("25", "v2", "flat"),
+        default="25",
+        help="25: fp32_25/ + fp16_25/ (default); v2: fp32_v2/ + fp16_v2/, as the "
+        "GLiNER2 exports; flat: everything in one directory",
+    )
     args = ap.parse_args()
 
     src: Path = args.export_dir
@@ -140,21 +154,40 @@ def main() -> int:
         wanted = set(args.only)
         fragments = [p for p in fragments if p.name[: -len("_fp32.onnx")] in wanted]
 
-    print(f"{len(fragments)} fragment(s) in {src}")
+    if args.layout == "flat":
+        fp32_dir = fp16_dir = out
+    else:
+        suffix = args.layout  # "25" or "v2"
+        fp32_dir, fp16_dir = out / f"fp32_{suffix}", out / f"fp16_{suffix}"
+    fp32_dir.mkdir(parents=True, exist_ok=True)
+    fp16_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"{len(fragments)} fragment(s) in {src}  [layout: {args.layout}]")
     for fp32 in fragments:
         stem = fp32.name[: -len("_fp32.onnx")]
         print(f"  {stem}")
-        convert(fp32, True, out / f"{stem}_fp16.onnx")
-        convert(fp32, False, out / f"{stem}_fp16_iobinding.onnx")
+        convert(fp32, True, fp16_dir / f"{stem}_fp16.onnx")
+        convert(fp32, False, fp16_dir / f"{stem}_fp16_iobinding.onnx")
 
-    if out != src:
-        # The engine reads these beside the fragments; without them the
-        # converted directory is not loadable on its own.
-        for name in ("tokenizer.json", "boundary_manifest.json"):
-            s = src / name
-            if s.exists():
-                shutil.copy2(s, out / name)
-                print(f"  copied {name}")
+    # The FP32 side is copied rather than converted, sidecar included, so each
+    # folder is a complete export instead of half of one.
+    if fp32_dir != src:
+        for fp32 in fragments:
+            for f in (fp32, fp32.with_name(fp32.name + ".data")):
+                if f.exists():
+                    shutil.copy2(f, fp32_dir / f.name)
+        print(f"  FP32 copied into {fp32_dir.name}/")
+
+    # An engine loading fp16_v2/ must find these there too: a folder that needs
+    # a file from its sibling is not something you can upload on its own.
+    for name in ("tokenizer.json", "boundary_manifest.json"):
+        s = src / name
+        if not s.exists():
+            continue
+        for d in {fp32_dir, fp16_dir}:
+            if d != src:
+                shutil.copy2(s, d / name)
+        print(f"  {name} placed beside each variant")
 
     print(f"\ndone -> {out}")
     return 0
