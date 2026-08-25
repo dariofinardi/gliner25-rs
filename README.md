@@ -127,9 +127,13 @@ host was under load 18 throughout, so the CPU figures are an upper bound and
 some GPU rows are noise. See [`BENCHMARKS.md`](BENCHMARKS.md) for the full table
 and what can and cannot be concluded from it.
 
-The short version: use `fp32` on GPU. `_fp16_iobinding` is the slowest variant
-everywhere until `IoBinding` is implemented, because FP16 graph I/O moves the
-conversion into a scalar host-side loop at every fragment boundary.
+The short version for this repository: **the timing figures are not usable.**
+Two runs of the same matrix an hour apart differ by up to 4× on identical
+configurations, and CPU comes out ahead of GPU — which for a 190 M-parameter
+encoder is not a result, it is contention. Profiling ruled out provider fallback
+(97% of nodes do run on CUDA) and graph size (the two architectures are within
+15% of each other), so the span/boundary gap remains unexplained and needs an
+idle machine to settle.
 
 ## Verification
 
@@ -139,11 +143,19 @@ resolution all live in Rust, outside the graphs.
 
 Against the PyTorch reference, 12 cases across 6 languages:
 
-| precision | result |
-|---|---|
-| `fp32` | **43/43** spans identical, max score delta 0.0000 |
-| `fp16` | **43/43** spans identical, max score delta 0.0004 |
-| `fp16_iobinding` | **43/43** spans identical, max score delta 0.0004 |
+Run on both devices and every precision, because a CUDA kernel producing
+different numbers from its CPU counterpart is exactly the kind of thing that
+goes unnoticed otherwise:
+
+| device | `fp32` | `fp16` | `fp16_iobinding` |
+|---|---|---|---|
+| CPU | 43/43 (**0.0000**) | 43/43 (0.0004) | 43/43 (0.0004) |
+| RTX 3090 | 43/43 (**0.0000**) | 43/43 (0.0007) | 43/43 (0.0007) |
+
+Identical spans in all six; brackets give the largest score delta. In `fp32` the
+agreement with PyTorch is exact at the precision the harness records, which puts
+a floor under the FP16 rows: their deviation is quantisation, not a defect in
+the graphs.
 
 ```sh
 python onnx_conversion_scripts/compare_with_pytorch.py reference \

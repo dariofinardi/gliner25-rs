@@ -46,57 +46,71 @@ The text falls in the **128-word bucket**, so the boundary head runs at L=128.
 One warm-up run, then 20 timed runs on GPU and 12 on CPU. Median reported
 alongside the minimum, which is the cleanest estimate of uncontended time.
 
-## Results
+## Correctness across devices
 
-| device | precision | median | min | p95 | per mention |
-|---|---|---|---|---|---|
-| RTX 3090 | `fp32` | **446 ms** | 329 ms | 2033 ms | 31.9 ms |
-| RTX 3090 | `fp16` | 2245 ms | 775 ms | 3849 ms | 160 ms |
-| RTX 3090 | `fp16_iobinding` | 765 ms | 692 ms | 2787 ms | 54.6 ms |
-| Ryzen 5900XT | `fp32` | 703 ms | 384 ms | 2645 ms | 50.2 ms |
-| Ryzen 5900XT | `fp16` | 900 ms | 637 ms | 3631 ms | 64.3 ms |
-| Ryzen 5900XT | `fp16_iobinding` | 673 ms | 605 ms | 2229 ms | 48.1 ms |
+This part is solid, and it is the reason the file is worth reading. The
+end-to-end suite was run on both devices and every precision against the same
+PyTorch reference:
 
-Load time is 8–13 s in every configuration.
+| device | `fp32` | `fp16` | `fp16_iobinding` |
+|---|---|---|---|
+| CPU | 43/43 (**0.0000**) | 43/43 (0.0004) | 43/43 (0.0004) |
+| RTX 3090 | 43/43 (**0.0000**) | 43/43 (0.0007) | 43/43 (0.0007) |
 
-## These numbers are not trustworthy yet
+Identical spans in all six; brackets give the largest score delta. In `fp32` the
+agreement with PyTorch is **exact** at the precision the harness records, on both
+devices — which puts a floor under the FP16 rows: their deviation is
+quantisation, not a defect in the graphs. Choosing a device is a performance
+decision, not an accuracy one.
 
-**This is a shared development machine, not a benchmark rig.** Other users had
-work on some of the cores, and the other GPU was carrying a training job for the
-whole run. Load average held at 18 on 32 threads. Treat every figure here as an
-**order-of-magnitude indication**, not a measurement.
+## Timings — and why you should not use them
 
-Two things in the table say plainly that it is polluted:
+Two runs of the same matrix, an hour apart, same machine:
 
-- **p95 is 3–6× the median in every row.** That spread is scheduling, not the
-  engine.
-- **GPU is slower than CPU in two of three precisions.** For a 190 M-parameter
-  encoder that cannot be true, and it is not a result — it is noise.
+| device | precision | run 1 median | run 2 median | ratio |
+|---|---|---|---|---|
+| RTX 3090 | `fp32` | 446 ms | 1922 ms | **4.3×** |
+| RTX 3090 | `fp16` | 2245 ms | 1233 ms | 1.8× |
+| RTX 3090 | `fp16_iobinding` | 765 ms | 642 ms | 1.2× |
+| Ryzen 5900XT | `fp32` | 703 ms | 375 ms | 1.9× |
+| Ryzen 5900XT | `fp16` | 900 ms | 573 ms | 1.6× |
+| Ryzen 5900XT | `fp16_iobinding` | 673 ms | 527 ms | 1.3× |
 
-**Re-run on an idle machine before drawing any conclusion from this table.** It
-is recorded here because a measurement with its caveats is worth more than no
-measurement, not because it is publishable.
+The same configuration moved by a factor of four. **Nothing in this table is a
+measurement of the engine**, and no ordering in it should be quoted. The host is
+a shared development machine and held load average 15–19 throughout; that is
+what is being measured.
 
-The one comparison that survives is the shape of the FP16 penalty, which is
-consistent with what the span engine shows on the same host: FP16 graph I/O
-means `float_tensor` and `take_float` convert element by element in a scalar
-Rust loop at every fragment boundary. See
-[`gliner2-rs/BENCHMARKS.md`](https://github.com/dariofinardi/gliner2-rs/blob/main/BENCHMARKS.md)
-for that measurement.
+Recorded anyway because the *instability itself* is the finding: on a contended
+host this workload is not reproducible, and anyone benchmarking it needs to know
+that before drawing conclusions.
 
-## What is worth noting anyway
+## What the investigation ruled out
 
-**Boundary is roughly an order of magnitude slower than span on the same host.**
-446 ms against 26 ms for `gliner2-core` on the same GPU with the same text. Part
-of that is real: the boundary head runs a candidate-pool builder with attention
-layers, a shared-pool scorer and two auxiliary heads, against a fixed 128-word
-bucket regardless of the text being ~90 words. Part is likely contention. The
-split between the two is exactly what an idle-machine re-run would settle.
+CPU came out faster than GPU in both runs, which for a 190 M-parameter encoder
+should not happen. Two hypotheses were tested rather than assumed:
 
-**Bucket choice matters and is visible.** A 90-word text pays for 128, and a
-91-word text would pay for 128 while an 65-word one pays for 64. If your
-documents cluster just above a bucket boundary, adding a bucket at that size is
-cheap — a head is a few MB.
+**Execution-provider fallback — ruled out.** Profiling the boundary head under
+the CUDA provider shows **97.1% of nodes on CUDA and 2.9% on CPU**. The graph is
+not being chopped into partitions with transfers between them.
+
+**Graph size — ruled out.** The two architectures are comparable, and share an
+identical encoder:
+
+| | encoder | rest | total per extraction |
+|---|---|---|---|
+| boundary (GLiNER2.5) | 4588 | 480 | 5068 nodes |
+| span (GLiNER2) | 4588 | 1227 | 5815 nodes |
+
+If anything the boundary pipeline is the smaller one, yet the span engine
+returns in ~26 ms on the same card while this one takes hundreds. **That gap is
+unexplained.** The candidate-pool builder does heavier work per node — pairwise
+scoring over a 32×32 endpoint grid, attention over the full bucket, a scorer
+across 192 candidates per query — but nothing measured here attributes the
+difference, and a contended host cannot settle it.
+
+Settling it needs an idle machine and per-fragment profiling. Until then, treat
+GLiNER2.5 GPU performance as **unknown**, not as slow.
 
 ## Reproducing
 
