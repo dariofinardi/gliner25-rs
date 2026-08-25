@@ -74,7 +74,8 @@ is exported per bucket — 64, 128, 256, 512 — and the engine picks the smalle
 that fits, padding with `text_mask = 0`.
 
 This costs nothing: a head is a few MB against 530 MB of encoder, and static
-shapes are what TensorRT, QNN and IOBinding want. Masked padding is verified
+shapes are what TensorRT and QNN want, and what zero-copy binding would need.
+Masked padding is verified
 transparent to 5e-07, even with random noise in the padded rows. Texts beyond
 the largest bucket raise `E_GLI_007` rather than silently truncating; the
 encoder caps at 512 positions anyway.

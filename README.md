@@ -53,10 +53,29 @@ mDeBERTa-v3-base, multilingual, 512-position encoder.
 |---|---|---|
 | `_fp32` | FP32 | universal fallback, OpenVINO, CPU |
 | `_fp16` | FP32 (`keep_io_types=True`) | CoreML, which demands FP32 I/O |
-| `_fp16_iobinding` | FP16 | CUDA, ROCm, QNN with IOBinding |
+| `_fp16_iobinding` | FP16 | CUDA, ROCm, QNN — see the note below |
 
 Selected automatically per platform, overridable with
 `GLINER2_PRECISION=fp32|fp16|fp16_iobinding`. A full FP16 set is about 540 MB.
+
+### A note on `_fp16_iobinding`
+
+The suffix names what the variant was *exported for*, not what this engine does
+with it. `keep_io_types=False` leaves the graph inputs and outputs in FP16 as
+well as the weights, which is what ORT's zero-copy `IoBinding` needs to keep
+tensors in device memory across the fragment chain.
+
+**This engine does not implement `IoBinding`.** It loads those graphs and runs
+them normally, so the variant still saves the FP32↔FP16 conversions at each
+boundary, but intermediate tensors round-trip through host memory between
+fragments. On CPU that costs nothing; on a discrete GPU it is the PCIe traffic
+the variant exists to avoid.
+
+If you need real zero-copy binding today, use the V2 pipeline in
+[gliner2-rs](https://github.com/dariofinardi/gliner2-rs)'s `gliner2-inference`
+crate, which does — though only for the span architecture. Implementing it here
+is tracked work, not a claim.
+
 
 ---
 
