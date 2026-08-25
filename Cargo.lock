@@ -289,16 +289,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "gliner25"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "gliner25-core",
-]
-
-[[package]]
-name = "gliner25-core"
-version = "0.1.0"
+name = "gliner25-rs"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "half",

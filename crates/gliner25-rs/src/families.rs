@@ -1,9 +1,6 @@
 // Copyright 2026 Dario Finardi. Published by Jugaad s.r.l. — Apache-2.0
 
-//! Schema families and relation reassembly for GLiNER2.5.
-//!
-//! Thin layer over [`gliner25_core`]: the engine is there, this crate carries
-//! the schema hygiene that a boundary model needs in practice.
+//! Schema families: the schema hygiene a boundary model needs in practice.
 //!
 //! ## Why families
 //!
@@ -18,7 +15,7 @@
 
 use std::collections::HashMap;
 
-use gliner25_core::{BoundaryEngine, BoundaryOutput, BoundaryParams, Mention, SchemaTask};
+use crate::{BoundaryEngine, BoundaryOutput, BoundaryParams, Mention, SchemaTask};
 
 /// A named group of related labels, run as one pass.
 #[derive(Debug, Clone)]

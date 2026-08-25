@@ -21,12 +21,16 @@ For GLiNER2 `span` checkpoints use
 
 | crate | what it is | docs |
 |---|---|---|
-| [`gliner25-core`](crates/gliner25-core) | the engine: prompt construction, ONNX Runtime helpers, overlap policies, boundary inference | [README](crates/gliner25-core/README.md) |
-| [`gliner25`](crates/gliner25) | schema families and merging | [README](crates/gliner25/README.md) |
+| [`gliner25-rs`](crates/gliner25-rs) | the engine, plus schema families behind a default-on feature | [README](crates/gliner25-rs/README.md) |
 
-One model, two crates. `gliner25-core` is self-contained: prompt construction,
-`ort` helpers and overlap policies live in it rather than in a crate shared with
-[gliner2-rs](https://github.com/dariofinardi/gliner2-rs).
+```toml
+[dependencies]
+gliner25-rs = "0.2"
+```
+
+One model, one crate. Prompt construction, `ort` helpers, overlap policies and
+schema families all live in it rather than in separate packages — 0.1 split them
+and produced pieces that were only ever installed as a set.
 
 That is a deliberate trade. A shared crate would have to be published under a
 single name and would tie the two repositories' release cadences together, for
@@ -86,13 +90,13 @@ is tracked work, not a claim.
 
 ```sh
 ORT_DYLIB_PATH=/path/to/libonnxruntime.so \
-cargo run --release --example extract -p gliner25-core -- models/gliner2.5-multi-v1-onnx
+cargo run --release --example extract -p gliner25-rs -- models/gliner2.5-multi-v1-onnx
 ```
 
 ```rust
-use gliner25_core::{BoundaryConfig, BoundaryEngine, SchemaTask};
+use gliner25_rs::{BoundaryConfig, BoundaryEngine, SchemaTask};
 
-gliner25_core::init("my-app");
+gliner25_rs::init("my-app");
 let mut engine = BoundaryEngine::new(BoundaryConfig::new("models/gliner2.5-multi-v1-onnx"))?;
 
 let tasks = vec![SchemaTask::Entities(vec![
@@ -107,9 +111,8 @@ for m in engine.extract("Mario Rossi works at Apple.", &tasks)?.mentions {
 Spans are **half-open** `[start, end)` — unlike GLiNER2's inclusive ranges.
 Byte offsets index the original text, so extracted spans keep their casing.
 
-Passing many labels at once makes them compete; see
-[`gliner25`](crates/gliner25/README.md) for schema families, the documented
-remedy.
+Passing many labels at once makes them compete; see the `families` module for
+schema families, the documented remedy.
 
 ---
 
@@ -206,7 +209,7 @@ the graphs.
 python onnx_conversion_scripts/compare_with_pytorch.py reference \
     --model_path fastino/gliner2.5-multi-v1 --cases tests/cases.json --out /tmp/pytorch.json
 
-ORT_DYLIB_PATH=… cargo run --release --example dump_json -p gliner25-core -- \
+ORT_DYLIB_PATH=… cargo run --release --example dump_json -p gliner25-rs -- \
     models/gliner2.5-multi-v1-onnx tests/cases.json > /tmp/rust.json
 
 python onnx_conversion_scripts/compare_with_pytorch.py diff \

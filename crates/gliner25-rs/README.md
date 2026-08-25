@@ -1,4 +1,4 @@
-# gliner25-core
+# gliner25-rs
 
 The GLiNER2.5 **boundary**-architecture inference engine, on ONNX Runtime via
 `ort` 2.0.0-rc.13.
@@ -6,14 +6,17 @@ The GLiNER2.5 **boundary**-architecture inference engine, on ONNX Runtime via
 Model: [`jugaadsrl/gliner2.5-multi-v1-onnx`](https://huggingface.co/jugaadsrl/gliner2.5-multi-v1-onnx),
 converted from [`fastino/gliner2.5-multi-v1`](https://huggingface.co/fastino/gliner2.5-multi-v1).
 
-Schema families and merging live in [`gliner25`](../gliner25) on top.
+Schema families ship in the same crate, behind the default-on `families`
+feature: splitting a wide schema into groups of related labels and merging the
+results, the documented remedy for labels interfering with each other. It was a
+separate crate in 0.1, which only ever got installed alongside the engine.
 
 ## Usage
 
 ```rust
-use gliner25_core::{BoundaryConfig, BoundaryEngine, BoundaryParams, SchemaTask};
+use gliner25_rs::{BoundaryConfig, BoundaryEngine, BoundaryParams, SchemaTask};
 
-gliner25_core::init("my-app");
+gliner25_rs::init("my-app");
 let mut engine = BoundaryEngine::new(BoundaryConfig::new("models/gliner2.5-multi-v1-onnx"))?;
 
 let tasks = vec![SchemaTask::Entities(vec![

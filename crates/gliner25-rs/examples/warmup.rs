@@ -10,7 +10,7 @@
 //! cargo run --release --example warmup -p gliner25-core -- <models_dir> [runs]
 //! ```
 
-use gliner25_core::{SchemaTask, BoundaryConfig, BoundaryEngine};
+use gliner25_rs::{SchemaTask, BoundaryConfig, BoundaryEngine};
 use std::time::Instant;
 
 const TEXT: &str = "Il signor Mario Rossi vive a Roma e lavora per Jugaad s.r.l. dal 2020. \
@@ -24,7 +24,7 @@ fn main() -> anyhow::Result<()> {
     let dir = args.next().expect("usage: warmup <models_dir> [runs]");
     let runs: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(30);
 
-    gliner25_core::init("warmup");
+    gliner25_rs::init("warmup");
     let t0 = Instant::now();
     let mut engine = BoundaryEngine::new(BoundaryConfig::new(&dir))?;
     println!("session build: {:.2}s", t0.elapsed().as_secs_f64());

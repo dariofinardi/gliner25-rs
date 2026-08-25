@@ -6,7 +6,7 @@
 //! cargo run --release --example extract -- models/gliner2.5-multi-v1-onnx
 //! ```
 
-use gliner25_core::{BoundaryConfig, BoundaryEngine, SchemaTask};
+use gliner25_rs::{BoundaryConfig, BoundaryEngine, SchemaTask};
 use std::time::Instant;
 
 fn main() -> anyhow::Result<()> {
@@ -14,7 +14,7 @@ fn main() -> anyhow::Result<()> {
         .nth(1)
         .unwrap_or_else(|| "models/gliner2.5-multi-v1-onnx".to_string());
 
-    gliner25_core::init("gliner25-example");
+    gliner25_rs::init("gliner25-example");
 
     let t0 = Instant::now();
     let mut engine = BoundaryEngine::new(BoundaryConfig::new(&dir))?;
