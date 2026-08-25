@@ -1,0 +1,22 @@
+[package]
+name = "gliner25-core"
+version = "0.1.0"
+description = "GLiNER2.5 boundary-architecture inference engine on ONNX Runtime"
+readme = "README.md"
+keywords = ["nlp", "ner", "onnx", "inference", "gliner"]
+categories = ["science", "text-processing"]
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+gliner-core = { version = "0.1.0", path = "../gliner-core" }
+ort.workspace = true
+ndarray.workspace = true
+anyhow.workspace = true
+half.workspace = true
+serde.workspace = true
+serde_json.workspace = true

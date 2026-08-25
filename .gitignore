@@ -9,3 +9,6 @@ tokenizer.json
 models/
 __pycache__/
 .DS_Store
+
+# shared model directory, populated by the exporter or from the Hub
+/models/

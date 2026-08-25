@@ -1,0 +1,49 @@
+[
+  {"name": "en_basic",
+   "text": "Mario Rossi works at Apple in Cupertino.",
+   "entities": ["person", "organization", "location"]},
+
+  {"name": "en_contact",
+   "text": "Please contact Laura Bianchi at laura.bianchi@example.com or +39 340 1234567.",
+   "entities": ["person", "email", "phone_number"]},
+
+  {"name": "it_business",
+   "text": "La societa' Alfa Consulting S.r.l., con sede a Milano, e' rappresentata da Marco Bianchi.",
+   "entities": ["organization", "location", "person"]},
+
+  {"name": "fr_person",
+   "text": "Madame Camille Dubois travaille chez Renault a Paris depuis 2019.",
+   "entities": ["person", "organization", "location", "date"]},
+
+  {"name": "de_person",
+   "text": "Herr Andreas Muller arbeitet bei Siemens AG in Munchen.",
+   "entities": ["person", "organization", "location"]},
+
+  {"name": "es_person",
+   "text": "Ana Maria Lopez trabaja en Telefonica en Madrid.",
+   "entities": ["person", "organization", "location"]},
+
+  {"name": "no_entities",
+   "text": "The weather today is mild and the meeting has been postponed.",
+   "entities": ["person", "organization", "location"]},
+
+  {"name": "repeated_entity",
+   "text": "Mario Rossi called Mario Rossi's office, then Mario Rossi left.",
+   "entities": ["person"]},
+
+  {"name": "adjacent_entities",
+   "text": "Alice Johnson Bob Smith Carol White attended the meeting in Rome Milan Naples.",
+   "entities": ["person", "location"]},
+
+  {"name": "accents_unicode",
+   "text": "Nicolo D'Ambrosio-Sforza e Zoe Muller-Lowenstein si sono incontrati a Zurigo.",
+   "entities": ["person", "location"]},
+
+  {"name": "dates",
+   "text": "The contract was signed on 15 March 2024 and expires on 14 March 2027.",
+   "entities": ["date"]},
+
+  {"name": "long_text",
+   "text": "The quarterly compliance review covered several incidents. On 3 February 2024, an employee named Thomas Weber accidentally shared a spreadsheet with an external vendor based in Frankfurt. The file included names such as Julia Schneider and Marco Ferrari, together with their email addresses julia.schneider@example.de and marco.ferrari@example.it. The data protection officer, Anna Kowalski, opened an investigation on 5 February 2024 and reported the breach to the supervisory authority in Berlin within the statutory window.",
+   "entities": ["person", "email", "location", "date"]}
+]
