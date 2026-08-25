@@ -144,10 +144,24 @@ boundary, but intermediate tensors round-trip through host memory between
 fragments. On CPU that costs nothing; on a discrete GPU it is the PCIe traffic
 the variant exists to avoid.
 
-If you need real zero-copy binding today, use the V2 pipeline in
-[gliner2-rs](https://github.com/dariofinardi/gliner2-rs)'s `gliner2-inference`
-crate, which does — though only for the span architecture. Implementing it here
-is tracked work, not a claim.
+**`gliner2-rs` has it, this crate does not — yet.** From 0.8.0 the span engine
+runs one pipeline with a switch between the two transports
+(`ExecutionMode::{Standard, IoBinding, Auto}`), and on an RTX 3090 binding is
+2.4–2.5× faster there. Nothing about that result is specific to the span
+architecture, so the same gain should be available here; it is simply not
+written yet.
+
+Two things make it more than a copy. The boundary chain runs a different set of
+fragments, and it picks a different `boundary_head_L*` session per sentence
+according to length, so the bound outputs have to follow a session that changes
+between calls rather than a fixed chain.
+
+Worth knowing meanwhile: `Precision::autodetect` prefers `_fp16_iobinding` on
+Linux and Windows, so by default this crate loads the graphs exported *for*
+binding and then does not bind. That is not wasted — the FP16 I/O still saves a
+conversion at each boundary — but on a discrete GPU the intermediates keep
+crossing PCIe. Set `GLINER2_PRECISION=fp32` if you would rather not pay the
+FP16 casts for a benefit the engine cannot yet collect.
 
 
 ---
