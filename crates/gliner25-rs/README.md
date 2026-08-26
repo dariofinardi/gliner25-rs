@@ -148,9 +148,10 @@ let cfg = BoundaryConfig::new("models/g25").or_download(hub::GLINER25_MULTI_V1);
 
 **Only the variant you will run is downloaded** — the execution mode picks it,
 so a bound engine fetches the FP16-I/O graphs and a standard one the FP32,
-rather than pulling every copy of every fragment. If the repository does not
-publish the preferred variant the engine falls back rather than failing;
-`jugaadsrl/gliner2.5-multi-v1-onnx` currently ships FP32 only.
+rather than pulling every copy of every fragment. If a repository does not
+publish the preferred variant the engine falls back rather than failing.
+`jugaadsrl/gliner2.5-multi-v1-onnx` publishes all three variants since
+2026-08-26, so a bound engine fetches 590 MB instead of 1.1 GB.
 
 The manifest is fetched and parsed *before* the heads, because which
 `boundary_head_L*` exist is a property of the export — guessing would either

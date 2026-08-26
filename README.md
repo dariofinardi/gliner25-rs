@@ -72,10 +72,11 @@ the Python library is not pulled again.
 **Only the variant you will run is fetched.** An export carries up to three
 copies of every fragment and the encoder alone is half a gigabyte, so the
 execution mode picks: a bound engine takes the FP16-I/O graphs, a standard one
-the FP32. `with_precision` pins the variant instead. If the repository does not
-publish the preferred one the engine falls back rather than failing —
-`jugaadsrl/gliner2.5-multi-v1-onnx` currently ships FP32 only, so both modes
-land there today.
+the FP32. `with_precision` pins the variant instead. If a repository does not
+publish the preferred one the engine falls back rather than failing. Since
+2026-08-26 `jugaadsrl/gliner2.5-multi-v1-onnx` publishes all three variants, so
+a bound engine fetches 590 MB of FP16 I/O instead of 1.1 GB of FP32 — verified
+against a cold cache.
 
 `hub::GLINER25_MULTI_V1` is
 [`jugaadsrl/gliner2.5-multi-v1-onnx`](https://huggingface.co/jugaadsrl/gliner2.5-multi-v1-onnx).
@@ -231,9 +232,10 @@ does not use it there.
 
 The suffix names what a variant was exported for: `keep_io_types=False` leaves
 graph inputs and outputs in FP16 as well as the weights, which is what zero-copy
-binding wants. The published `gliner2.5-multi-v1` export ships **fp32 only**, so
-the question does not arise for it — `Precision::autodetect` finds no FP16
-variant and settles on fp32. It matters if you export your own.
+binding wants. `jugaadsrl/gliner2.5-multi-v1-onnx` publishes all three variants
+(FP16 added 2026-08-26, derived with `downcast_fp16.py` and verified 41/41
+spans against FP32, largest score delta 0.0017), so `Precision::autodetect`
+picks `_fp16_iobinding` on Linux and Windows when the files are present.
 
 ---
 
@@ -275,9 +277,9 @@ fn main() -> anyhow::Result<()> {
 ORT_DYLIB_PATH=/path/to/libonnxruntime.so cargo run --release
 ```
 
-Verified end to end: warm calls answer in ~19 ms on an RTX 3090. The published
-export ships FP32 only, so a bound engine asks for the FP16-I/O variant and
-falls back to FP32 on its own. Prefer a model already on disk?
+Verified end to end: warm calls answer in ~19 ms on an RTX 3090, and on a CUDA
+device the bound engine fetches the 590 MB FP16-I/O variant rather than the
+1.1 GB FP32. Prefer a model already on disk?
 `BoundaryConfig::new("models/gliner2.5-onnx")` instead, and nothing touches the
 network.
 
@@ -470,7 +472,8 @@ wrong export.
 The exporter emits all three precisions, but it needs the PyTorch checkpoint.
 When you have the ONNX and not the checkpoint — the published
 [`jugaadsrl/gliner2.5-multi-v1-onnx`](https://huggingface.co/jugaadsrl/gliner2.5-multi-v1-onnx)
-ships FP32 only — derive them from what you have:
+shipped FP32 only until 2026-08-26, when the FP16 variants produced by this
+script were uploaded — derive them from what you have:
 
 ```sh
 python onnx_conversion_scripts/downcast_fp16.py <export_dir> --out models/g25-fp16

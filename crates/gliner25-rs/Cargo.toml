@@ -1,6 +1,6 @@
 [package]
 name = "gliner25-rs"
-version = "0.5.4"
+version = "0.5.5"
 description = "Native Rust inference for GLiNER2.5 on ONNX Runtime: boundary-architecture entity extraction with schema families"
 readme = "README.md"
 keywords = ["nlp", "ner", "onnx", "inference", "gliner"]

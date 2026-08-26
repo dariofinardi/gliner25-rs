@@ -1,3 +1,13 @@
+## [v0.5.5] - 2026-08-26
+### 📦 The published export now ships all three precision variants
+- The FP16 and FP16-IOBinding variants produced by `downcast_fp16.py` (41/41
+  spans against FP32, largest score delta 0.0017) are on
+  `jugaadsrl/gliner2.5-multi-v1-onnx` as of 2026-08-26, flat beside the FP32
+  files. A bound engine now fetches **590 MB instead of 1.1 GB** — verified
+  against a cold cache — and `Precision::autodetect` picks `_fp16_iobinding` on
+  Linux and Windows. Every "ships FP32 only" claim in the docs is updated;
+  the fallback chain stays, for repositories that publish less.
+
 ## [v0.5.4] - 2026-08-26
 ### 🛡️ Architecture gating
 - **A GLiNER2 span export is refused by name.** The manifest check already
