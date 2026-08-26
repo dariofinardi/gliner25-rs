@@ -239,6 +239,50 @@ variant and settles on fp32. It matters if you export your own.
 
 ## Quick start
 
+### In your own project
+
+No clone, no model on disk — the crate fetches the export on first run:
+
+```toml
+[dependencies]
+gliner25-rs = "0.5"
+```
+
+```rust
+use gliner25_rs::{BoundaryConfig, BoundaryEngine, SchemaTask, hub};
+
+fn main() -> anyhow::Result<()> {
+    gliner25_rs::init("entity-extract");
+
+    let mut engine = BoundaryEngine::new(BoundaryConfig::from_hub(hub::GLINER25_MULTI_V1))?;
+
+    let text = "Mario Rossi works at Apple in Cupertino.";
+    let tasks = vec![SchemaTask::Entities(vec![
+        "person".into(),
+        "organization".into(),
+        "location".into(),
+    ])];
+    let out = engine.extract(text, &tasks)?;
+
+    for m in &out.mentions {
+        println!("{:?}  {}  {:.1}%", m.text, m.field, m.score * 100.0);
+    }
+    Ok(())
+}
+```
+
+```sh
+ORT_DYLIB_PATH=/path/to/libonnxruntime.so cargo run --release
+```
+
+Verified end to end: warm calls answer in ~19 ms on an RTX 3090. The published
+export ships FP32 only, so a bound engine asks for the FP16-I/O variant and
+falls back to FP32 on its own. Prefer a model already on disk?
+`BoundaryConfig::new("models/gliner2.5-onnx")` instead, and nothing touches the
+network.
+
+### From a clone of this repository
+
 ```sh
 ORT_DYLIB_PATH=/path/to/libonnxruntime.so \
 cargo run --release --example extract -p gliner25-rs -- models/gliner2.5-multi-v1-onnx
