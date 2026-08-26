@@ -1,3 +1,13 @@
+## [v0.5.3] - 2026-08-26
+### 🐛 Fixes
+- **`OverlapPolicy::parse` accepts `all`**, matching Python's alias table — a
+  manifest using that spelling failed to load.
+- The score-quantisation note in the resolver, as in gliner2-rs 0.9.3.
+
+The per-query scoping this crate already had matches Python's boundary engine
+exactly (`_resolve_spans` per `query_id`), confirmed in the same comparison —
+no change needed there.
+
 ## [v0.5.2] - 2026-08-26
 ### 🐛 Fixes — from the re-audit of gliner2-rs, applied symmetrically
 - **Chunk merging now removes seam artefacts.** Within each `(task, field)`,
