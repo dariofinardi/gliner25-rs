@@ -1,3 +1,9 @@
+## [v0.5.1] - 2026-08-26
+### 📚 Diagnostics
+- `E_GLI_007 NO_LENGTH_BUCKET` said "split the text" without saying how. It now
+  names `extract_long()`, which windows the text and merges the results, and
+  keeps the re-export hint as the second option.
+
 ## [v0.5.0] - 2026-08-26
 ### ✨ Features
 - **Long documents.** The export's largest length bucket is a hard ceiling —

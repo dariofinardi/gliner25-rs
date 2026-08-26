@@ -41,7 +41,8 @@ impl fmt::Display for GlinerError {
             Self::NoLengthBucket { words, max_bucket } => write!(
                 f,
                 "[E_GLI_007] NO_LENGTH_BUCKET: {words} words exceed the largest exported \
-                 bucket ({max_bucket}); re-export with --buckets, or split the text"
+                 bucket ({max_bucket}). Use extract_long(), which windows the text and \
+                 merges the results, or re-export with larger --buckets"
             ),
             Self::Other(err) => write!(f, "{err}"),
         }
