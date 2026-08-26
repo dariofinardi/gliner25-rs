@@ -43,6 +43,7 @@ fn main() -> anyhow::Result<()> {
     let cfg = BoundaryConfig::new("models/g25").or_download(hub::GLINER25_MULTI_V1);
     let _ = BoundaryConfig::from_hub(hub::GLINER25_MULTI_V1);
     let _ = hub::Model::new("acme/my-export");
+    let _ = hub::Model::grouped("acme/my-grouped-export");
     let _ = out.verdict("tone", 0.5);
     Ok(())
 }

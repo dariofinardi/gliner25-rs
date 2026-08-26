@@ -1,3 +1,24 @@
+## [v0.5.6] - 2026-08-26
+### 📦 The Hub repository is organised by precision, and the downloader follows
+- `jugaadsrl/gliner2.5-multi-v1-onnx` now keeps one **self-contained folder per
+  precision** — `fp32_25/` (13 files, manifest and tokenizer included) and
+  `fp16_25/` (16 files, both FP16 variants) — with nothing at the root but the
+  model card. Fetching one variant downloads nothing of the others: measured
+  cold, `binding` pulls 590 MB of `fp16_25/` and `standard` pulls 1158 MB of
+  `fp32_25/`, each folder complete with its sidecars.
+- `hub::Model` carries a `Layout` now: `Model::new` for flat repositories,
+  `Model::grouped` for ones arranged like the published export.
+  `GLINER25_MULTI_V1` is grouped.
+- **Fixed in the same change:** the sidecar fetch bypassed the folder prefix,
+  so the FP32 heads downloaded cleanly and failed at session build with a
+  filesystem error naming their `.onnx.data`. Caught by the cold-cache test of
+  the standard path.
+
+### ⚠️ Compatibility
+- `from_hub` in 0.5.0–0.5.5 fetches from the repository root, which is now
+  empty of model files: those builds can no longer auto-download this model.
+  Loading from a local directory is unaffected. `cargo update` to 0.5.6.
+
 ## [v0.5.5] - 2026-08-26
 ### 📦 The published export now ships all three precision variants
 - The FP16 and FP16-IOBinding variants produced by `downcast_fp16.py` (41/41

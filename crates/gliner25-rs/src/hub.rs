@@ -43,23 +43,41 @@ use crate::runtime::Precision;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 
+/// How an export arranges its files in the repository.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Layout {
+    /// Everything at the repository root, precision in the file name.
+    Flat,
+    /// One folder per precision — `fp32_25/`, `fp16_25/` — each self-contained
+    /// with its own `tokenizer.json` and `boundary_manifest.json`, so fetching
+    /// one variant downloads nothing of the others. The published export is
+    /// laid out this way.
+    Grouped,
+}
+
 /// A published ONNX export.
 ///
 /// The constant below names the export Jugaad publishes. Any other repository
-/// works too — build a `Model` with [`Model::new`].
+/// works too — [`Model::new`] for a flat one, [`Model::grouped`] for one
+/// organised into precision folders.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Model {
     pub repo_id: &'static str,
+    pub layout: Layout,
 }
 
 impl Model {
     pub const fn new(repo_id: &'static str) -> Self {
-        Self { repo_id }
+        Self { repo_id, layout: Layout::Flat }
+    }
+
+    pub const fn grouped(repo_id: &'static str) -> Self {
+        Self { repo_id, layout: Layout::Grouped }
     }
 }
 
 /// `fastino/gliner2.5-multi-v1`, the boundary checkpoint.
-pub const GLINER25_MULTI_V1: Model = Model::new("jugaadsrl/gliner2.5-multi-v1-onnx");
+pub const GLINER25_MULTI_V1: Model = Model::grouped("jugaadsrl/gliner2.5-multi-v1-onnx");
 
 /// Fragments every boundary export carries, whatever its buckets.
 const FRAGMENTS: [&str; 3] = ["encoder", "routed_gather", "classifier"];
@@ -100,9 +118,18 @@ fn download_exact(model: Model, precision: Precision) -> Result<PathBuf> {
         .map_err(|e| GlinerError::Hub(format!("could not initialise the Hub client: {e}")))?;
     let repo = api.model(model.repo_id.to_string());
 
+    // The folder this variant lives in, per the declared layout. Grouped
+    // folders are self-contained, so every file — manifest and tokenizer
+    // included — comes from the same place, and nothing of the other variants
+    // is touched.
+    let prefix = match model.layout {
+        Layout::Flat => String::new(),
+        Layout::Grouped => format!("{}/", precision.legacy_subdir()),
+    };
     let fetch = |file: &str| -> Result<PathBuf> {
-        repo.get(file).map_err(|e| {
-            GlinerError::Hub(format!("{}: could not fetch {file} ({e})", model.repo_id)).into()
+        let path = format!("{prefix}{file}");
+        repo.get(&path).map_err(|e| {
+            GlinerError::Hub(format!("{}: could not fetch {path} ({e})", model.repo_id)).into()
         })
     };
     // A fragment past the 2 GB protobuf limit keeps its weights in a sidecar
@@ -112,7 +139,11 @@ fn download_exact(model: Model, precision: Precision) -> Result<PathBuf> {
     // filesystem error naming a file nobody asked for.
     let fetch_onnx = |file: &str| -> Result<PathBuf> {
         let path = fetch(file)?;
-        let _ = repo.get(&format!("{file}.data"));
+        // Through `fetch`'s prefix, not `repo.get` directly: the sidecar sits
+        // in the same folder as its graph, and asking the root for it finds
+        // nothing in a grouped layout — the exact bug that made the FP32 heads
+        // download cleanly and then fail at session build.
+        let _ = fetch(&format!("{file}.data"));
         Ok(path)
     };
 
@@ -150,8 +181,19 @@ fn download_exact(model: Model, precision: Precision) -> Result<PathBuf> {
     }
     fetch("tokenizer.json")?;
 
-    Ok(manifest_path
+    // Hand back the snapshot ROOT for a grouped layout: `resolve_fragment`
+    // and `resolve_aux` look in the root and then in the precision subfolders,
+    // so the root serves both layouts — and lets an engine later ask for a
+    // different variant of the same snapshot.
+    let leaf = manifest_path
         .parent()
         .context("downloaded manifest has no parent directory")?
-        .to_path_buf())
+        .to_path_buf();
+    Ok(match model.layout {
+        Layout::Flat => leaf,
+        Layout::Grouped => leaf
+            .parent()
+            .context("grouped snapshot has no root")?
+            .to_path_buf(),
+    })
 }

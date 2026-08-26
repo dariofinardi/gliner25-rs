@@ -79,9 +79,11 @@ a bound engine fetches 590 MB of FP16 I/O instead of 1.1 GB of FP32 — verified
 against a cold cache.
 
 `hub::GLINER25_MULTI_V1` is
-[`jugaadsrl/gliner2.5-multi-v1-onnx`](https://huggingface.co/jugaadsrl/gliner2.5-multi-v1-onnx).
-Any other repository works — `hub::Model::new(repo_id)` takes a private
-fine-tune as readily as a published one.
+[`jugaadsrl/gliner2.5-multi-v1-onnx`](https://huggingface.co/jugaadsrl/gliner2.5-multi-v1-onnx),
+organised into one self-contained folder per precision (`fp32_25/`, `fp16_25/`)
+so fetching one variant downloads nothing of the others. Any other repository
+works — `hub::Model::new(repo_id)` for a flat one, `hub::Model::grouped(repo_id)`
+for one arranged like the published export.
 
 Try it:
 
