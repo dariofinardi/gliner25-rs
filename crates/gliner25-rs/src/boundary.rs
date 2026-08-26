@@ -302,11 +302,26 @@ impl BoundaryEngine {
         // fp32_v2/ + fp16_v2/ subfolders the published gliner2 exports use.
         let manifest_path = resolve_aux(&dir, "boundary_manifest.json", config.precision)
             .ok_or_else(|| {
-                GlinerError::IncompleteModelDir(format!(
-                    "boundary_manifest.json not found in {} nor in its variant \
-                     subfolders; the directory does not hold a boundary export",
-                    dir.display()
-                ))
+                // `span_rep` is the span architecture's signature fragment; if
+                // it is here, this is a GLiNER2 export and the right message is
+                // "wrong crate", not "missing file".
+                let is_span = resolve_fragment(&dir, "span_rep", config.precision).is_some()
+                    || resolve_fragment(&dir, "span_rep", Precision::Fp32).is_some();
+                if is_span {
+                    GlinerError::IncompleteModelDir(format!(
+                        "{} holds a GLiNER2 **span** export (span_rep is present, \
+                         boundary_manifest.json is not). This engine runs the \
+                         boundary architecture only — use the gliner2-rs crate \
+                         for this model.",
+                        dir.display()
+                    ))
+                } else {
+                    GlinerError::IncompleteModelDir(format!(
+                        "boundary_manifest.json not found in {} nor in its variant \
+                         subfolders; the directory does not hold a boundary export",
+                        dir.display()
+                    ))
+                }
             })?;
         let manifest: BoundaryManifest =
             serde_json::from_slice(&std::fs::read(&manifest_path)?)?;

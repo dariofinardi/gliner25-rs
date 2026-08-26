@@ -116,8 +116,26 @@ fn download_exact(model: Model, precision: Precision) -> Result<PathBuf> {
         Ok(path)
     };
 
-    // The manifest first: it is what says which heads exist.
-    let manifest_path = fetch("boundary_manifest.json")?;
+    // The manifest first: it is what says which heads exist — and it is the
+    // architecture's signature, so its absence with span_rep present means the
+    // caller pointed this crate at a GLiNER2 span export.
+    let manifest_path = match fetch("boundary_manifest.json") {
+        Ok(p) => p,
+        Err(e) => {
+            let is_span = repo.get("span_rep_fp32.onnx").is_ok()
+                || repo.get("fp32_v2/span_rep_fp32.onnx").is_ok();
+            if is_span {
+                return Err(GlinerError::Hub(format!(
+                    "{} is a GLiNER2 **span** export (it publishes span_rep and \
+                     no boundary_manifest.json). This crate runs the boundary \
+                     architecture only — use gliner2-rs for this model.",
+                    model.repo_id
+                ))
+                .into());
+            }
+            return Err(e);
+        }
+    };
     let manifest: BoundaryManifest = serde_json::from_slice(&std::fs::read(&manifest_path)?)
         .with_context(|| {
             format!("{}: boundary_manifest.json is not a boundary manifest", model.repo_id)

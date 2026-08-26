@@ -1,3 +1,11 @@
+## [v0.5.4] - 2026-08-26
+### 🛡️ Architecture gating
+- **A GLiNER2 span export is refused by name.** The manifest check already
+  stopped it, but the message said "boundary_manifest.json not found" — a
+  missing-file report for what is really a wrong-crate situation. If `span_rep`
+  is present the error now says so: "this is a GLiNER2 span export — use the
+  gliner2-rs crate". Same probe on the Hub path, before anything downloads.
+
 ## [v0.5.3] - 2026-08-26
 ### 🐛 Fixes
 - **`OverlapPolicy::parse` accepts `all`**, matching Python's alias table — a
