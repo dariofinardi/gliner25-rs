@@ -159,9 +159,18 @@ pub fn remap(output: &mut BoundaryOutput, chunk: &Chunk, text: &str) {
 
 /// Collapses what overlapping windows saw twice.
 ///
-/// Mentions are keyed by span and field, classifications by task and label;
-/// the highest score wins in both cases. Order is by score descending, so the
-/// result reads the way a single-call result does.
+/// Two passes. Identical spans are keyed by `(range, task, field)` and the
+/// highest score wins. Then, within each `(task, field)`, *overlapping* spans
+/// are resolved greedily by score — the seam case, where one window saw
+/// `Mario` at its edge and the neighbouring window saw `Mario Rossi` whole,
+/// and both survived the first pass because their ranges differ. A single
+/// window never produces such a pair (the engine's overlap policy removed it),
+/// so this pass only ever removes seam artefacts. `gliner2`'s
+/// `merge_chunk_results` resolves overlaps at merge for the same reason.
+///
+/// Fields never interact, exactly as in single-window decoding.
+///
+/// Classifications are collapsed per `(task, label)` by highest score.
 pub fn merge(parts: Vec<BoundaryOutput>) -> BoundaryOutput {
     let mut mentions: HashMap<(usize, usize, String, String), Mention> = HashMap::new();
     let mut classes: HashMap<(String, String), crate::boundary::Classification> = HashMap::new();
@@ -189,7 +198,28 @@ pub fn merge(parts: Vec<BoundaryOutput>) -> BoundaryOutput {
         expected_counts.extend(part.expected_counts);
     }
 
+    // Seam pass: greedy by score within each (task, field), spans half-open.
     let mut mentions: Vec<Mention> = mentions.into_values().collect();
+    mentions.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.word_start.cmp(&b.word_start))
+            .then(a.word_end.cmp(&b.word_end))
+    });
+    let mut kept: Vec<Mention> = Vec::new();
+    for cand in mentions {
+        let clashes = kept.iter().any(|k| {
+            k.task == cand.task
+                && k.field == cand.field
+                && cand.word_start < k.word_end
+                && k.word_start < cand.word_end
+        });
+        if !clashes {
+            kept.push(cand);
+        }
+    }
+    let mut mentions = kept;
     mentions.sort_by(|a, b| {
         b.score
             .partial_cmp(&a.score)
@@ -241,6 +271,54 @@ mod tests {
     #[test]
     fn empty_text_still_yields_a_window() {
         assert_eq!(Chunker::default().split("").unwrap().len(), 1);
+    }
+
+    fn men(field: &str, cs: usize, ce: usize, ws: usize, we: usize, score: f32) -> Mention {
+        Mention {
+            text: String::new(),
+            task: "entities".into(),
+            field: field.into(),
+            score,
+            char_start: cs,
+            char_end: ce,
+            word_start: ws,
+            word_end: we,
+            query_id: 0,
+        }
+    }
+
+    #[test]
+    fn merge_collapses_seam_truncations_within_a_field() {
+        // half-open ranges: the truncation is [5,6), the whole mention [5,7).
+        let a = BoundaryOutput {
+            mentions: vec![men("person", 30, 35, 5, 6, 0.71)],
+            classifications: vec![],
+            expected_counts: vec![],
+        };
+        let b = BoundaryOutput {
+            mentions: vec![men("person", 30, 41, 5, 7, 0.97)],
+            classifications: vec![],
+            expected_counts: vec![],
+        };
+        let merged = merge(vec![a, b]);
+        assert_eq!(merged.mentions.len(), 1);
+        assert_eq!(merged.mentions[0].word_end, 7, "the whole mention wins");
+    }
+
+    #[test]
+    fn merge_adjacent_half_open_spans_do_not_clash() {
+        // [5,6) and [6,7) touch but do not overlap under half-open semantics.
+        let a = BoundaryOutput {
+            mentions: vec![men("person", 30, 35, 5, 6, 0.9)],
+            classifications: vec![],
+            expected_counts: vec![],
+        };
+        let b = BoundaryOutput {
+            mentions: vec![men("person", 36, 41, 6, 7, 0.9)],
+            classifications: vec![],
+            expected_counts: vec![],
+        };
+        assert_eq!(merge(vec![a, b]).mentions.len(), 2);
     }
 
     #[test]

@@ -1,3 +1,13 @@
+## [v0.5.2] - 2026-08-26
+### 🐛 Fixes — from the re-audit of gliner2-rs, applied symmetrically
+- **Chunk merging now removes seam artefacts.** Within each `(task, field)`,
+  overlapping mentions from neighbouring windows are resolved greedily by
+  score, half-open semantics — adjacent spans touch without clashing. Fields
+  still never interact.
+- **A standard-path OOM is `E_GLI_002` now**, not `E_GLI_001` with a
+  contradictory message.
+- `Chunker` and `ExecutionMode` re-exported at the crate root.
+
 ## [v0.5.1] - 2026-08-26
 ### 📚 Diagnostics
 - `E_GLI_007 NO_LENGTH_BUCKET` said "split the text" without saying how. It now
